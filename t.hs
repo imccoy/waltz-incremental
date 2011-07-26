@@ -9,6 +9,7 @@
 import Debug.Trace
 
 
+-- framework: page display
 follow_to source target = FuncAssociationWalk source target
 showValueAsString = FuncF (\(ValueEntity entity) -> Text $ show entity)
 showEntryText = FuncF getText
@@ -25,44 +26,6 @@ instance Show Func where
   show (FuncAssociationWalk source target) = "func: " ++ source ++ " -> " ++ target
   show _ = "func"
 
-data EntityLand = EntityLand { entityNames :: [String]
-                             , entitiesRelatingToMultiple :: [(String, String)]
-                             , entitiesRelatingToOne :: [(String, String)] }
-
-emptyEntityLand = EntityLand { entityNames = [], entitiesRelatingToMultiple = [], entitiesRelatingToOne = [] }
-
-
-addEntity name entityLand = entityLand { entityNames = (name:(entityNames entityLand)) }
-addEntitiesRelatingToMultiple names entityLand = entityLand { entitiesRelatingToMultiple = (names:(entitiesRelatingToMultiple entityLand)) }
-addEntitiesRelatingToOne names entityLand = entityLand { entitiesRelatingToOne = (names:(entitiesRelatingToOne entityLand)) }
-
-haveEntity = addEntity
-relates_to_multiple a b = addEntitiesRelatingToMultiple (a,b)
-relates_to_one a b = addEntitiesRelatingToOne (a,b)
-
-
-type EntityData = [EntityStore]
-emptyData = []
-data EntityStore = EntityStoreEntry Entity Entity
-
-build_data :: EntityLand -> [EntityLand -> EntityData -> EntityData] -> EntityData
-build_data el fs = build_data' el emptyData fs
-  where build_data' el d [] = d
-        build_data' el d (f:fs) = build_data' el (f el d) fs
-
-add_entity parent child el d = (EntityStoreEntry parent child):d
-add_entity_in _ parent child el d = (EntityStoreEntry parent child):d
-add_property_on parent _ child el d = (EntityStoreEntry parent child):d
-
--- application stuff
-
-data Section = Good | Bad | Confusing
-  deriving (Show, Eq)
-data Entry = Entry String
-  deriving (Show, Eq)
-
-data Entity = EntitySection Section | EntityEntry Entry
-  deriving (Show, Eq)
 
 drawPage :: Value -> EntityData -> String
 drawPage val dta = drawPageValue val 0
@@ -92,11 +55,55 @@ drawPage val dta = drawPageValue val 0
         invoke' (FuncF f) _ = error "Too many arguments to singular function"
 
 
+
+
+-- framework: data schema
+
+data EntityLand = EntityLand { entityNames :: [String]
+                             , entitiesRelatingToMultiple :: [(String, String)]
+                             , entitiesRelatingToOne :: [(String, String)] }
+
+emptyEntityLand = EntityLand { entityNames = [], entitiesRelatingToMultiple = [], entitiesRelatingToOne = [] }
+
+
+addEntity name entityLand = entityLand { entityNames = (name:(entityNames entityLand)) }
+addEntitiesRelatingToMultiple names entityLand = entityLand { entitiesRelatingToMultiple = (names:(entitiesRelatingToMultiple entityLand)) }
+addEntitiesRelatingToOne names entityLand = entityLand { entitiesRelatingToOne = (names:(entitiesRelatingToOne entityLand)) }
+
+haveEntity = addEntity
+relates_to_multiple a b = addEntitiesRelatingToMultiple (a,b)
+relates_to_one a b = addEntitiesRelatingToOne (a,b)
+
+-- framework: data store
+
+type EntityData = [EntityStore]
+emptyData = []
+data EntityStore = EntityStoreEntry Entity Entity
+
+build_data :: EntityLand -> [EntityLand -> EntityData -> EntityData] -> EntityData
+build_data el fs = build_data' el emptyData fs
+  where build_data' el d [] = d
+        build_data' el d (f:fs) = build_data' el (f el d) fs
+
+add_entity parent child el d = (EntityStoreEntry parent child):d
+add_entity_in _ parent child el d = (EntityStoreEntry parent child):d
+add_property_on parent _ child el d = (EntityStoreEntry parent child):d
+
 lookup_related :: [EntityStore] -> Entity -> [Entity]
 lookup_related dta entity = map (\(EntityStoreEntry a b) -> b) $ (filter matchesEntity) dta
   where matchesEntity :: EntityStore -> Bool
         matchesEntity (EntityStoreEntry a b) = a == entity
 
+
+-- application stuff
+
+data Section = Good | Bad | Confusing
+  deriving (Show, Eq)
+data Entry = Entry String
+  deriving (Show, Eq)
+
+data Entity = EntitySection Section | EntityEntry Entry
+  deriving (Show, Eq)
 
 entityLand = 
 	haveEntity "Section" $
@@ -110,7 +117,7 @@ entityLand =
 retro_entry entry = Tag "span" $ ValueFuncCall showEntryText [entry]
 
 retro_entries section = Tag "div" $ Values [
-                                      (Tag "h1" $ ValueFuncCall showValueAsString [section]),
+                                      (Tag "h2" $ ValueFuncCall showValueAsString [section]),
 				      (ValueFuncCall (FuncMap retro_entry) [ValueFuncCall ("Section" `follow_to` "Entry") [section]])]
 
 retro = Tag "div" $ Values [retro_entries(ValueEntity $ EntitySection Good),
@@ -123,5 +130,11 @@ sample_data = build_data entityLand
                       add_entity (EntitySection Bad) (EntityEntry $ Entry "It's Ugly")
                       ]
 
+retro_page = Values [(Tag "h1" $ Text "Retro"),
+                     retro]
 
-main = putStrLn $ drawPage retro sample_data
+wrap_in_html body = Tag "html" $ Values [
+                                    (Tag "head" $ Tag "title" $ Text "Waltz App"),
+                                    (Tag "body" body)]
+
+main = putStrLn $ drawPage (wrap_in_html retro_page) sample_data
