@@ -10,26 +10,20 @@ import Debug.Trace
 
 
 follow_to source target = FuncAssociationWalk source target
-showValueAsString = FuncF (\(ValueEntity entity) -> ValueHtmlElement $ Text $ show entity)
+showValueAsString = FuncF (\(ValueEntity entity) -> Text $ show entity)
 showEntryText = FuncF getText
-  where getText (ValueEntity (EntityEntry (Entry text))) = ValueHtmlElement $ Text text
+  where getText (ValueEntity (EntityEntry (Entry text))) = Text text
         getText e = error $ "can't get text " ++ (show e)
 
 
-data Value = ValueHtmlElement HtmlElement | ValueHtmlElements HtmlElements | ValueEntity Entity | ValueFuncCall FuncCall | Values [Value]
+data Value = Tag String Value | Text String | ValueEntity Entity | ValueFuncCall Func [Value] | Values [Value]
   deriving (Show)
 
 data Func = FuncAssociationWalk String String | FuncMap (Value -> Value) | FuncF (Value -> Value)
-data FuncCall = FuncCall Func [Value]
 
-instance Show FuncCall where
-  show (FuncCall (FuncAssociationWalk source target) _) = "function call: " ++ source ++ " -> " ++ target
-  show _ = "function call"
-
-data HtmlElements = HtmlElements [HtmlElement] | HtmlElementsEmpty | HtmlElementsFuncCall FuncCall | HtmlElementsConcat [HtmlElements]
-  deriving (Show)
-data HtmlElement = Tag String HtmlElements | Value Value | Text String | HtmlElementFuncCall FuncCall
-  deriving (Show)
+instance Show Func where
+  show (FuncAssociationWalk source target) = "func: " ++ source ++ " -> " ++ target
+  show _ = "func"
 
 data EntityLand = EntityLand { entityNames :: [String]
                              , entitiesRelatingToMultiple :: [(String, String)]
@@ -70,40 +64,24 @@ data Entry = Entry String
 data Entity = EntitySection Section | EntityEntry Entry
   deriving (Show, Eq)
 
-drawPage :: HtmlElement -> EntityData -> String
-drawPage elt dta = drawPageElement elt 0
+drawPage :: Value -> EntityData -> String
+drawPage val dta = drawPageValue val 0
   where
     line indent string = concat $ (replicate indent "  ") ++ [string, "\n"]
-    drawPageElement (Tag name children) lvl = line lvl ("<" ++ name ++ ">") ++ 
-                                                drawPageElements children (lvl + 1) ++
-                                                line lvl ("</" ++ name ++ ">")
-    drawPageElement (HtmlElementFuncCall func_call) lvl = drawPageFuncCall func_call lvl
-    drawPageElement (Text text) lvl = line lvl text
-    drawPageElement _ lvl = error "unimplemented page element type"
-
-    drawPageElements HtmlElementsEmpty lvl = ""
-    drawPageElements (HtmlElements []) lvl = ""
-    drawPageElements (HtmlElements (elt:elts)) lvl = drawPageElement elt lvl ++ (drawPageElements (HtmlElements elts) lvl)
-    drawPageElements (HtmlElementsConcat []) lvl = ""
-    drawPageElements (HtmlElementsConcat (elts:eltss)) lvl = drawPageElements elts lvl ++ (drawPageElements (HtmlElementsConcat eltss) lvl)
-    drawPageElements (HtmlElementsFuncCall func_call) lvl = drawPageFuncCall func_call lvl
-
-    drawPageFuncCall func_call lvl = drawPageValue (eval func_call) lvl
-
-    drawPageValue (ValueHtmlElement htmlElement) lvl = drawPageElement htmlElement lvl
-    drawPageValue (ValueHtmlElements htmlElements) lvl = drawPageElements htmlElements lvl
+    drawPageValue (Tag name child) lvl = line lvl ("<" ++ name ++ ">") ++ 
+                                         drawPageValue child (lvl + 1) ++
+                                         line lvl ("</" ++ name ++ ">")
+    drawPageValue (Text text) lvl = line lvl text
     drawPageValue (Values values) lvl = concat $ map (\v -> drawPageValue v lvl) values 
+    drawPageValue func_call@(ValueFuncCall _ _) lvl = drawPageValue (eval func_call) lvl
     drawPageValue (ValueEntity entity) lvl = error ("can't draw value: entity " ++ (show entity))
 
-    eval :: FuncCall -> Value
-    eval (FuncCall func args) = invoke func args
-
-    eval' :: Value -> Value
-    eval' (ValueFuncCall func_call) = eval func_call
-    eval' v = v
+    eval :: Value -> Value
+    eval (ValueFuncCall func args) = invoke func args
+    eval v = v
 
     invoke :: Func -> [Value] -> Value
-    invoke func args = invoke' func (map eval' args)
+    invoke func args = invoke' func (map eval args)
       where
         invoke' (FuncAssociationWalk source_type attr) [ValueEntity entity] = Values $ map ValueEntity $ lookup_related dta entity
         invoke' (FuncAssociationWalk source_type attr) vs = error $ "Can't walk association over " ++ (show vs)
@@ -129,15 +107,15 @@ entityLand =
         emptyEntityLand
 
 
-retro_entry entry = ValueHtmlElement $ Tag "span" $ HtmlElements [HtmlElementFuncCall $ FuncCall showEntryText [entry]]
+retro_entry entry = Tag "span" $ ValueFuncCall showEntryText [entry]
 
-retro_entries section = Tag "div" $ HtmlElementsConcat [
-                                      (HtmlElements [Tag "h1" $ HtmlElements [HtmlElementFuncCall $ FuncCall showValueAsString [section]]]),
-				      (HtmlElementsFuncCall $ FuncCall (FuncMap retro_entry) [ValueFuncCall $ FuncCall ("Section" `follow_to` "Entry") [section]])]
+retro_entries section = Tag "div" $ Values [
+                                      (Tag "h1" $ ValueFuncCall showValueAsString [section]),
+				      (ValueFuncCall (FuncMap retro_entry) [ValueFuncCall ("Section" `follow_to` "Entry") [section]])]
 
-retro = Tag "div" $ HtmlElements [retro_entries(ValueEntity $ EntitySection Good),
-                                  retro_entries(ValueEntity $ EntitySection Bad),
-                                  retro_entries(ValueEntity $ EntitySection Confusing)]
+retro = Tag "div" $ Values [retro_entries(ValueEntity $ EntitySection Good),
+                            retro_entries(ValueEntity $ EntitySection Bad),
+                            retro_entries(ValueEntity $ EntitySection Confusing)]
            
 sample_data = build_data entityLand
                      [
