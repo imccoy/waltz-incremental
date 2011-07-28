@@ -1,8 +1,5 @@
 -- TODOS
--- "Value" should not construct a HtmlElement
--- Should HtmlElement and Value both come in plural varieties?
--- is a function to a Value different to a function to a HtmlElement?
--- should Values contain HtmlElements *and* vice versa?
+-- How do you make two different haps using two different columns of a table?
 
 
 -- framework stuff
@@ -17,7 +14,13 @@ showEntryText = FuncF getText
         getText e = error $ "can't get text " ++ (show e)
 
 
-data Value = Tag String Value | Text String | ValueEntity Entity | ValueFuncCall Func [Value] | Values [Value]
+data Value = Tag String [(String, String)] Value
+           | Text String
+           | ValueEntity Entity
+           | ValueFuncCall Func [Value]
+           | Values [Value]
+           | HapperReceiver Happer [Value]
+           | HapperInput HapperField HapperControl
   deriving (Show)
 
 data Func = FuncAssociationWalk String String | FuncMap (Value -> Value) | FuncF (Value -> Value)
@@ -31,13 +34,18 @@ drawPage :: Value -> EntityData -> String
 drawPage val dta = drawPageValue val 0
   where
     line indent string = concat $ (replicate indent "  ") ++ [string, "\n"]
-    drawPageValue (Tag name child) lvl = line lvl ("<" ++ name ++ ">") ++ 
-                                         drawPageValue child (lvl + 1) ++
-                                         line lvl ("</" ++ name ++ ">")
+    drawPageValue (Tag name attrs child) lvl = line lvl ("<" ++ name ++ (attrString attrs) ++  ">") ++ 
+                                               drawPageValue child (lvl + 1) ++
+                                               line lvl ("</" ++ name ++ ">")
+      where attrString attrs = concat $ map (\(name, value) -> concat [" ", name, "=\"", value, "\""]) attrs
     drawPageValue (Text text) lvl = line lvl text
     drawPageValue (Values values) lvl = concat $ map (\v -> drawPageValue v lvl) values 
     drawPageValue func_call@(ValueFuncCall _ _) lvl = drawPageValue (eval func_call) lvl
     drawPageValue (ValueEntity entity) lvl = error ("can't draw value: entity " ++ (show entity))
+    drawPageValue (HapperReceiver happer values) lvl = drawPageValue (Tag "form" [] $ Values values) lvl
+    drawPageValue (HapperInput happerField Textfield) lvl = drawPageValue (Tag "input" [("name", fieldName happerField)] $ Values []) lvl
+    drawPageValue (HapperInput happerField (Dropdown options)) lvl = drawPageValue (Tag "select" [("name", fieldName happerField)] $ Values optionTags) lvl
+       where optionTags = map (\option -> Tag "option" [] $ Text option) options
 
     eval :: Value -> Value
     eval (ValueFuncCall func args) = invoke func args
@@ -94,16 +102,35 @@ lookup_related dta entity = map (\(EntityStoreEntry a b) -> b) $ (filter matches
   where matchesEntity :: EntityStore -> Bool
         matchesEntity (EntityStoreEntry a b) = a == entity
 
+-- framework: user input
+
+data Ensurer = EnsureIsOneOf [String] | EnsureIsNotEmpty
+  deriving (Show)
+
+data HapperField = HapperField { fieldName :: String, validators :: [Ensurer] }
+  deriving (Show)
+
+data Happer = Happer String [HapperField] ((HapperField -> String) -> Hap)
+happerName (Happer name _ _) = name
+
+data HapperControl = Textfield | Dropdown [String]
+  deriving (Show)
+
+instance Show Happer where
+  show (Happer name fields func) = "Happer " ++ name ++ " " ++ (show fields)
+
 
 -- application stuff
 
 data Section = Good | Bad | Confusing
-  deriving (Show, Eq)
+  deriving (Show, Read, Eq)
 data Entry = Entry String
   deriving (Show, Eq)
 
 data Entity = EntitySection Section | EntityEntry Entry
   deriving (Show, Eq)
+
+data Hap = NewEntry Section String
 
 entityLand = 
 	haveEntity "Section" $
@@ -113,14 +140,20 @@ entityLand =
         "Entry" `relates_to_one` "Text" $
         emptyEntityLand
 
+possibleSectionStrings = ["Good", "Bad", "Confusing"]
 
-retro_entry entry = Tag "span" $ ValueFuncCall showEntryText [entry]
+newEntryHapperSection = HapperField { fieldName = "section", validators = [EnsureIsOneOf possibleSectionStrings] }
+newEntryHapperText = HapperField { fieldName = "text", validators = [EnsureIsNotEmpty] }
+newEntryHapper = Happer "newEntry" [newEntryHapperSection, newEntryHapperText] (\getter -> NewEntry (read $ getter (newEntryHapperSection)) (getter newEntryHapperText))
 
-retro_entries section = Tag "div" $ Values [
-                                      (Tag "h2" $ ValueFuncCall showValueAsString [section]),
+
+retro_entry entry = Tag "span" [] $ ValueFuncCall showEntryText [entry]
+
+retro_entries section = Tag "div" [] $ Values [
+                                      (Tag "h2" [] $ ValueFuncCall showValueAsString [section]),
 				      (ValueFuncCall (FuncMap retro_entry) [ValueFuncCall ("Section" `follow_to` "Entry") [section]])]
 
-retro = Tag "div" $ Values [retro_entries(ValueEntity $ EntitySection Good),
+retro = Tag "div" [] $ Values [retro_entries(ValueEntity $ EntitySection Good),
                             retro_entries(ValueEntity $ EntitySection Bad),
                             retro_entries(ValueEntity $ EntitySection Confusing)]
            
@@ -130,11 +163,15 @@ sample_data = build_data entityLand
                       add_entity (EntitySection Bad) (EntityEntry $ Entry "It's Ugly")
                       ]
 
-retro_page = Values [(Tag "h1" $ Text "Retro"),
-                     retro]
+retro_page = Values [(Tag "h1" [] $ Text "Retro"),
+                     retro,
+                     HapperReceiver newEntryHapper [
+                       HapperInput newEntryHapperSection (Dropdown possibleSectionStrings),
+                       HapperInput newEntryHapperText Textfield
+                     ]]
 
-wrap_in_html body = Tag "html" $ Values [
-                                    (Tag "head" $ Tag "title" $ Text "Waltz App"),
-                                    (Tag "body" body)]
+wrap_in_html body = Tag "html" [] $ Values [
+                                    (Tag "head" [] $ Tag "title" [] $ Text "Waltz App"),
+                                    (Tag "body" [] body)]
 
 main = putStrLn $ drawPage (wrap_in_html retro_page) sample_data
