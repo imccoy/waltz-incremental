@@ -1,5 +1,18 @@
+{-# LANGUAGE OverloadedStrings #-}
+import Data.Enumerator (tryIO)
+import qualified Data.Enumerator.List as EL
+import Data.IORef
+import Data.Maybe (fromJust)
+import Network.Wai
+import Network.HTTP.Types
+import Network.Wai.Handler.Warp (run)
+import qualified Data.ByteString.Lazy.Char8 as LB8
+import qualified Data.ByteString.Char8 as B8
+import qualified Data.ByteString as B
+
 -- TODOS
--- How do you make two different haps using two different columns of a table?
+-- How do you make two different haps using two different columns of a html table?
+-- How do you make two different haps that submit at the same time? Two different haps that submit independently?
 
 
 -- framework stuff
@@ -42,7 +55,8 @@ drawPage val dta = drawPageValue val 0
     drawPageValue (Values values) lvl = concat $ map (\v -> drawPageValue v lvl) values 
     drawPageValue func_call@(ValueFuncCall _ _) lvl = drawPageValue (eval func_call) lvl
     drawPageValue (ValueEntity entity) lvl = error ("can't draw value: entity " ++ (show entity))
-    drawPageValue (HapperReceiver happer values) lvl = drawPageValue (Tag "form" [] $ Values values) lvl
+    drawPageValue (HapperReceiver happer values) lvl = drawPageValue (Tag "form" [("method", "post")] $ Values (input:values)) lvl
+       where input = Tag "input" [("type", "hidden"), ("name", "happer"), ("value", happerName happer)] $ Values []
     drawPageValue (HapperInput happerField Textfield) lvl = drawPageValue (Tag "input" [("name", fieldName happerField)] $ Values []) lvl
     drawPageValue (HapperInput happerField (Dropdown options)) lvl = drawPageValue (Tag "select" [("name", fieldName happerField)] $ Values optionTags) lvl
        where optionTags = map (\option -> Tag "option" [] $ Text option) options
@@ -102,6 +116,8 @@ lookup_related dta entity = map (\(EntityStoreEntry a b) -> b) $ (filter matches
   where matchesEntity :: EntityStore -> Bool
         matchesEntity (EntityStoreEntry a b) = a == entity
 
+data Action = AddPropertyOn Entity Entity
+
 -- framework: user input
 
 data Ensurer = EnsureIsOneOf [String] | EnsureIsNotEmpty
@@ -112,6 +128,7 @@ data HapperField = HapperField { fieldName :: String, validators :: [Ensurer] }
 
 data Happer = Happer String [HapperField] ((HapperField -> String) -> Hap)
 happerName (Happer name _ _) = name
+happerBuilder (Happer _ _ builder) = builder
 
 data HapperControl = Textfield | Dropdown [String]
   deriving (Show)
@@ -119,6 +136,43 @@ data HapperControl = Textfield | Dropdown [String]
 instance Show Happer where
   show (Happer name fields func) = "Happer " ++ name ++ " " ++ (show fields)
 
+-- http
+
+app :: IORef EntityData -> Application 
+app db request = do current_db <- tryIO $ readIORef db
+                    request_body_chunks <- EL.consume
+                    let request_body_query = parseQuery $ B.concat request_body_chunks
+                    let hap = processRequest request current_db request_body_query
+                    let actions = actionsForHap hap
+                    let (response, new_db) = processActions actions current_db
+                    tryIO $ writeIORef db new_db
+                    return response
+
+processRequest request current_db request_body_query = case parseMethod $ requestMethod request of
+                                                         (Right POST) ->  happerToHap request_body_query
+                                                         otherwise -> defaultHap
+
+lastInQueryString :: Query -> String -> String
+lastInQueryString query name = case filter (\(n, v) -> n == (B8.pack name)) $ query of
+                                 []             -> error "nothing for " ++ name ++ " in " ++ (show query)
+                                 lookup_matches -> B8.unpack $ fromJust $ snd $ last $ lookup_matches
+
+happerToHap request_body_query = let happer_name = lastInQueryString request_body_query "happer"
+                                     happer = last $ filter (\h -> (happerName h) == happer_name) allHappers
+                                     getter happerField = lastInQueryString request_body_query $ fieldName happerField
+                                  in (happerBuilder happer) getter
+
+processActions ((AddPropertyOn entity property):actions) current_db = processActions actions (add_property_on entity entity property entityLand current_db)
+processActions [] current_db = (response, current_db)
+  where response = responseLBS
+                            status200
+                            [("Content-Type", B8.pack "text/html")]
+                            (LB8.pack $ drawPage (wrap_in_html retro_page) current_db)
+
+main = do
+    putStrLn $ "http://localhost:8080/"
+    db <- newIORef sample_data
+    run 8080 $ app db
 
 -- application stuff
 
@@ -130,7 +184,12 @@ data Entry = Entry String
 data Entity = EntitySection Section | EntityEntry Entry
   deriving (Show, Eq)
 
-data Hap = NewEntry Section String
+data Hap = NewEntry Section String | ShowRetro
+
+defaultHap = ShowRetro
+
+actionsForHap ShowRetro = []
+actionsForHap (NewEntry section text) = [AddPropertyOn (EntitySection section) (EntityEntry $ Entry text)]
 
 entityLand = 
 	haveEntity "Section" $
@@ -145,6 +204,8 @@ possibleSectionStrings = ["Good", "Bad", "Confusing"]
 newEntryHapperSection = HapperField { fieldName = "section", validators = [EnsureIsOneOf possibleSectionStrings] }
 newEntryHapperText = HapperField { fieldName = "text", validators = [EnsureIsNotEmpty] }
 newEntryHapper = Happer "newEntry" [newEntryHapperSection, newEntryHapperText] (\getter -> NewEntry (read $ getter (newEntryHapperSection)) (getter newEntryHapperText))
+
+allHappers = [newEntryHapper]
 
 
 retro_entry entry = Tag "span" [] $ ValueFuncCall showEntryText [entry]
@@ -174,4 +235,4 @@ wrap_in_html body = Tag "html" [] $ Values [
                                     (Tag "head" [] $ Tag "title" [] $ Text "Waltz App"),
                                     (Tag "body" [] body)]
 
-main = putStrLn $ drawPage (wrap_in_html retro_page) sample_data
+
