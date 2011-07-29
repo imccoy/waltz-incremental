@@ -58,8 +58,11 @@ drawPage val dta = drawPageValue val 0
     drawPageValue (HapperReceiver happer values) lvl = drawPageValue (Tag "form" [("method", "post")] $ Values (input:values)) lvl
        where input = Tag "input" [("type", "hidden"), ("name", "happer"), ("value", happerName happer)] $ Values []
     drawPageValue (HapperInput happerField Textfield) lvl = drawPageValue (Tag "input" [("name", fieldName happerField)] $ Values []) lvl
-    drawPageValue (HapperInput happerField (Dropdown options)) lvl = drawPageValue (Tag "select" [("name", fieldName happerField)] $ Values optionTags) lvl
-       where optionTags = map (\option -> Tag "option" [] $ Text option) options
+    drawPageValue (HapperInput happerField (Dropdown options)) lvl = drawSelect happerField options "" lvl
+    drawPageValue (HapperInput happerField (DropdownV options def)) lvl = drawSelect happerField options def lvl
+    drawSelect happerField options def lvl = drawPageValue (Tag "select" [("name", fieldName happerField)] $ Values optionTags) lvl
+       where optionTags = map (\option -> Tag "option" (attrs option) $ Text option) options
+             attrs option = if option == def then [("selected", "selected")] else []
 
     eval :: Value -> Value
     eval (ValueFuncCall func args) = invoke func args
@@ -97,7 +100,7 @@ lookup_related dta entity = map (\(EntityStoreEntry a b) -> b) $ (filter matches
   where matchesEntity :: EntityStore -> Bool
         matchesEntity (EntityStoreEntry a b) = a == entity
 
-data Action = AddPropertyOn Entity Entity
+data Action = AddPropertyOn Entity Entity | ShowPage Value
 
 -- framework: user input
 
@@ -111,7 +114,7 @@ data Happer = Happer String [HapperField] ((HapperField -> String) -> Hap)
 happerName (Happer name _ _) = name
 happerBuilder (Happer _ _ builder) = builder
 
-data HapperControl = Textfield | Dropdown [String]
+data HapperControl = Textfield | Dropdown [String] | DropdownV [String] String
   deriving (Show)
 
 instance Show Happer where
@@ -143,12 +146,15 @@ happerToHap request_body_query = let happer_name = lastInQueryString request_bod
                                      getter happerField = lastInQueryString request_body_query $ fieldName happerField
                                   in (happerBuilder happer) getter
 
-processActions ((AddPropertyOn entity property):actions) current_db = processActions actions (add_entity entity property current_db)
-processActions [] current_db = (response, current_db)
-  where response = responseLBS
-                            status200
-                            [("Content-Type", B8.pack "text/html")]
-                            (LB8.pack $ drawPage (wrap_in_html retro_page) current_db)
+processActions actions current_db = processActions' actions current_db Nothing
+  where
+    processActions' ((AddPropertyOn entity property):actions) current_db page = processActions' actions (add_entity entity property current_db) page
+    processActions' ((ShowPage page):actions) current_db Nothing = processActions' actions current_db (Just page)
+    processActions' [] current_db (Just page) = (response, current_db)
+      where response = responseLBS
+                                status200
+                                [("Content-Type", B8.pack "text/html")]
+                                (LB8.pack $ drawPage (wrap_in_html $ page) current_db)
 
 main = do
     putStrLn $ "http://localhost:8080/"
@@ -165,12 +171,12 @@ data Entry = Entry String
 data Entity = EntitySection Section | EntityEntry Entry
   deriving (Show, Eq)
 
-data Hap = NewEntry Section String | ShowRetro
+data Hap = NewEntry Section String | ShowRetro Section
 
-defaultHap = ShowRetro
+defaultHap = ShowRetro Good
 
-actionsForHap ShowRetro = []
-actionsForHap (NewEntry section text) = [AddPropertyOn (EntitySection section) (EntityEntry $ Entry text)]
+actionsForHap (ShowRetro section) = [ShowPage $ retro_page section]
+actionsForHap (NewEntry section text) = [AddPropertyOn (EntitySection section) (EntityEntry $ Entry text), ShowPage $ retro_page section]
 
 possibleSectionStrings = ["Good", "Bad", "Confusing"]
 
@@ -188,8 +194,8 @@ retro_entries section = Tag "div" [] $ Values [
 				      (ValueFuncCall (FuncMap retro_entry) [ValueFuncCall ("Section" `follow_to` "Entry") [section]])]
 
 retro = Tag "div" [] $ Values [retro_entries(ValueEntity $ EntitySection Good),
-                            retro_entries(ValueEntity $ EntitySection Bad),
-                            retro_entries(ValueEntity $ EntitySection Confusing)]
+                               retro_entries(ValueEntity $ EntitySection Bad),
+                               retro_entries(ValueEntity $ EntitySection Confusing)]
            
 sample_data = build_data
                      [
@@ -197,12 +203,12 @@ sample_data = build_data
                       add_entity (EntitySection Bad) (EntityEntry $ Entry "It's Ugly")
                       ]
 
-retro_page = Values [(Tag "h1" [] $ Text "Retro"),
-                     retro,
-                     HapperReceiver newEntryHapper [
-                       HapperInput newEntryHapperSection (Dropdown possibleSectionStrings),
-                       HapperInput newEntryHapperText Textfield
-                     ]]
+retro_page initial_section = Values [(Tag "h1" [] $ Text "Retro"),
+                                     retro,
+                                     HapperReceiver newEntryHapper [
+                                       HapperInput newEntryHapperSection (DropdownV possibleSectionStrings $ show initial_section),
+                                       HapperInput newEntryHapperText Textfield
+                                     ]]
 
 wrap_in_html body = Tag "html" [] $ Values [
                                     (Tag "head" [] $ Tag "title" [] $ Text "Waltz App"),
