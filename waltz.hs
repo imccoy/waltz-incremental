@@ -79,39 +79,20 @@ drawPage val dta = drawPageValue val 0
 
 
 
--- framework: data schema
-
-data EntityLand = EntityLand { entityNames :: [String]
-                             , entitiesRelatingToMultiple :: [(String, String)]
-                             , entitiesRelatingToOne :: [(String, String)] }
-
-emptyEntityLand = EntityLand { entityNames = [], entitiesRelatingToMultiple = [], entitiesRelatingToOne = [] }
-
-
-addEntity name entityLand = entityLand { entityNames = (name:(entityNames entityLand)) }
-addEntitiesRelatingToMultiple names entityLand = entityLand { entitiesRelatingToMultiple = (names:(entitiesRelatingToMultiple entityLand)) }
-addEntitiesRelatingToOne names entityLand = entityLand { entitiesRelatingToOne = (names:(entitiesRelatingToOne entityLand)) }
-
-haveEntity = addEntity
-relates_to_multiple a b = addEntitiesRelatingToMultiple (a,b)
-relates_to_one a b = addEntitiesRelatingToOne (a,b)
-
 -- framework: data store
 
 type EntityData = [EntityStore]
 emptyData = []
 data EntityStore = EntityStoreEntry Entity Entity
 
-build_data :: EntityLand -> [EntityLand -> EntityData -> EntityData] -> EntityData
-build_data el fs = build_data' el emptyData fs
-  where build_data' el d [] = d
-        build_data' el d (f:fs) = build_data' el (f el d) fs
+build_data :: [EntityData -> EntityData] -> EntityData
+build_data fs = build_data' emptyData fs
+  where build_data' d [] = d
+        build_data' d (f:fs) = build_data' (f d) fs
 
-add_entity parent child el d = (EntityStoreEntry parent child):d
-add_entity_in _ parent child el d = (EntityStoreEntry parent child):d
-add_property_on parent _ child el d = (EntityStoreEntry parent child):d
+add_entity parent child d = (EntityStoreEntry parent child):d
 
-lookup_related :: [EntityStore] -> Entity -> [Entity]
+lookup_related :: EntityData -> Entity -> [Entity]
 lookup_related dta entity = map (\(EntityStoreEntry a b) -> b) $ (filter matchesEntity) dta
   where matchesEntity :: EntityStore -> Bool
         matchesEntity (EntityStoreEntry a b) = a == entity
@@ -162,7 +143,7 @@ happerToHap request_body_query = let happer_name = lastInQueryString request_bod
                                      getter happerField = lastInQueryString request_body_query $ fieldName happerField
                                   in (happerBuilder happer) getter
 
-processActions ((AddPropertyOn entity property):actions) current_db = processActions actions (add_property_on entity entity property entityLand current_db)
+processActions ((AddPropertyOn entity property):actions) current_db = processActions actions (add_entity entity property current_db)
 processActions [] current_db = (response, current_db)
   where response = responseLBS
                             status200
@@ -191,14 +172,6 @@ defaultHap = ShowRetro
 actionsForHap ShowRetro = []
 actionsForHap (NewEntry section text) = [AddPropertyOn (EntitySection section) (EntityEntry $ Entry text)]
 
-entityLand = 
-	haveEntity "Section" $
-        haveEntity "Entry" $
-        haveEntity "Text" $ 
-       	"Section" `relates_to_multiple` "Entry" $
-        "Entry" `relates_to_one` "Text" $
-        emptyEntityLand
-
 possibleSectionStrings = ["Good", "Bad", "Confusing"]
 
 newEntryHapperSection = HapperField { fieldName = "section", validators = [EnsureIsOneOf possibleSectionStrings] }
@@ -218,7 +191,7 @@ retro = Tag "div" [] $ Values [retro_entries(ValueEntity $ EntitySection Good),
                             retro_entries(ValueEntity $ EntitySection Bad),
                             retro_entries(ValueEntity $ EntitySection Confusing)]
            
-sample_data = build_data entityLand
+sample_data = build_data
                      [
                       add_entity (EntitySection Good) (EntityEntry $ Entry "It's Okay"),
                       add_entity (EntitySection Bad) (EntityEntry $ Entry "It's Ugly")
