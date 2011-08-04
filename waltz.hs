@@ -32,8 +32,8 @@ data Value = Tag String [(String, String)] Value
            | ValueEntity Entity
            | ValueFuncCall Func [Value]
            | Values [Value]
-           | HapperReceiver Happer [Value]
-           | HapperInput HapperField HapperControl
+           | ActionReceiverValue ActionReceiver [Value]
+           | ActionReceiverInput ActionReceiverField ActionReceiverControl
   deriving (Show)
 
 data Func = FuncAssociationWalk String String | FuncMap (Value -> Value) | FuncF (Value -> Value)
@@ -55,12 +55,12 @@ drawPage val dta = drawPageValue val 0
     drawPageValue (Values values) lvl = concat $ map (\v -> drawPageValue v lvl) values 
     drawPageValue func_call@(ValueFuncCall _ _) lvl = drawPageValue (eval func_call) lvl
     drawPageValue (ValueEntity entity) lvl = error ("can't draw value: entity " ++ (show entity))
-    drawPageValue (HapperReceiver happer values) lvl = drawPageValue (Tag "form" [("method", "post")] $ Values (input:values)) lvl
-       where input = Tag "input" [("type", "hidden"), ("name", "happer"), ("value", happerName happer)] $ Values []
-    drawPageValue (HapperInput happerField Textfield) lvl = drawPageValue (Tag "input" [("name", fieldName happerField)] $ Values []) lvl
-    drawPageValue (HapperInput happerField (Dropdown options)) lvl = drawSelect happerField options "" lvl
-    drawPageValue (HapperInput happerField (DropdownV options def)) lvl = drawSelect happerField options def lvl
-    drawSelect happerField options def lvl = drawPageValue (Tag "select" [("name", fieldName happerField)] $ Values optionTags) lvl
+    drawPageValue (ActionReceiverValue actionReceiver values) lvl = drawPageValue (Tag "form" [("method", "post")] $ Values (input:values)) lvl
+       where input = Tag "input" [("type", "hidden"), ("name", "actionReceiver"), ("value", actionReceiverName actionReceiver)] $ Values []
+    drawPageValue (ActionReceiverInput actionReceiverField Textfield) lvl = drawPageValue (Tag "input" [("name", fieldName actionReceiverField)] $ Values []) lvl
+    drawPageValue (ActionReceiverInput actionReceiverField (Dropdown options)) lvl = drawSelect actionReceiverField options "" lvl
+    drawPageValue (ActionReceiverInput actionReceiverField (DropdownV options def)) lvl = drawSelect actionReceiverField options def lvl
+    drawSelect actionReceiverField options def lvl = drawPageValue (Tag "select" [("name", fieldName actionReceiverField)] $ Values optionTags) lvl
        where optionTags = map (\option -> Tag "option" (attrs option) $ Text option) options
              attrs option = if option == def then [("selected", "selected")] else []
 
@@ -100,25 +100,23 @@ lookup_related dta entity = map (\(EntityStoreEntry a b) -> b) $ (filter matches
   where matchesEntity :: EntityStore -> Bool
         matchesEntity (EntityStoreEntry a b) = a == entity
 
-data Action = AddPropertyOn Entity Entity | ShowPage Value
-
 -- framework: user input
 
 data Ensurer = EnsureIsOneOf [String] | EnsureIsNotEmpty
   deriving (Show)
 
-data HapperField = HapperField { fieldName :: String, validators :: [Ensurer] }
+data ActionReceiverField = ActionReceiverField { fieldName :: String, validators :: [Ensurer] }
   deriving (Show)
 
-data Happer = Happer String [HapperField] ((HapperField -> String) -> Hap)
-happerName (Happer name _ _) = name
-happerBuilder (Happer _ _ builder) = builder
+data ActionReceiver = ActionReceiver String [ActionReceiverField] ((ActionReceiverField -> String) -> Action)
+actionReceiverName (ActionReceiver name _ _) = name
+actionReceiverBuilder (ActionReceiver _ _ builder) = builder
 
-data HapperControl = Textfield | Dropdown [String] | DropdownV [String] String
+data ActionReceiverControl = Textfield | Dropdown [String] | DropdownV [String] String
   deriving (Show)
 
-instance Show Happer where
-  show (Happer name fields func) = "Happer " ++ name ++ " " ++ (show fields)
+instance Show ActionReceiver where
+  show (ActionReceiver name fields func) = "ActionReceiver " ++ name ++ " " ++ (show fields)
 
 -- http
 
@@ -126,25 +124,25 @@ app :: IORef EntityData -> Application
 app db request = do current_db <- tryIO $ readIORef db
                     request_body_chunks <- EL.consume
                     let request_body_query = parseQuery $ B.concat request_body_chunks
-                    let hap = processRequest request current_db request_body_query
-                    let actions = actionsForHap hap
+                    let action = processRequest request current_db request_body_query
+                    let actions = actionsFor action
                     let (response, new_db) = processActions actions current_db
                     tryIO $ writeIORef db new_db
                     return response
 
 processRequest request current_db request_body_query = case parseMethod $ requestMethod request of
-                                                         (Right POST) ->  happerToHap request_body_query
-                                                         otherwise -> defaultHap
+                                                         (Right POST) ->  actionReceiverToAction request_body_query
+                                                         otherwise -> defaultAction
 
 lastInQueryString :: Query -> String -> String
 lastInQueryString query name = case filter (\(n, v) -> n == (B8.pack name)) $ query of
                                  []             -> error "nothing for " ++ name ++ " in " ++ (show query)
                                  lookup_matches -> B8.unpack $ fromJust $ snd $ last $ lookup_matches
 
-happerToHap request_body_query = let happer_name = lastInQueryString request_body_query "happer"
-                                     happer = last $ filter (\h -> (happerName h) == happer_name) allHappers
-                                     getter happerField = lastInQueryString request_body_query $ fieldName happerField
-                                  in (happerBuilder happer) getter
+actionReceiverToAction request_body_query = let action_receiver_name = lastInQueryString request_body_query "actionReceiver"
+                                                action_receiver = last $ filter (\h -> (actionReceiverName h) == action_receiver_name) allActionReceivers
+                                                getter action_receiver_field = lastInQueryString request_body_query $ fieldName action_receiver_field
+                                             in (actionReceiverBuilder action_receiver) getter
 
 processActions actions current_db = processActions' actions current_db Nothing
   where
@@ -171,20 +169,21 @@ data Entry = Entry String
 data Entity = EntitySection Section | EntityEntry Entry
   deriving (Show, Eq)
 
-data Hap = NewEntry Section String | ShowRetro Section
+data Action = AddPropertyOn Entity Entity | ShowPage Value | NewEntry Section String | ShowRetro Section
 
-defaultHap = ShowRetro Good
 
-actionsForHap (ShowRetro section) = [ShowPage $ retro_page section]
-actionsForHap (NewEntry section text) = [AddPropertyOn (EntitySection section) (EntityEntry $ Entry text), ShowPage $ retro_page section]
+defaultAction = ShowRetro Good
+
+actionsFor (ShowRetro section) = [ShowPage $ retro_page section]
+actionsFor (NewEntry section text) = [AddPropertyOn (EntitySection section) (EntityEntry $ Entry text), ShowPage $ retro_page section]
 
 possibleSectionStrings = ["Good", "Bad", "Confusing"]
 
-newEntryHapperSection = HapperField { fieldName = "section", validators = [EnsureIsOneOf possibleSectionStrings] }
-newEntryHapperText = HapperField { fieldName = "text", validators = [EnsureIsNotEmpty] }
-newEntryHapper = Happer "newEntry" [newEntryHapperSection, newEntryHapperText] (\getter -> NewEntry (read $ getter (newEntryHapperSection)) (getter newEntryHapperText))
+newEntryActionReceiverSection = ActionReceiverField { fieldName = "section", validators = [EnsureIsOneOf possibleSectionStrings] }
+newEntryActionReceiverText = ActionReceiverField { fieldName = "text", validators = [EnsureIsNotEmpty] }
+newEntryActionReceiver = ActionReceiver "newEntry" [newEntryActionReceiverSection, newEntryActionReceiverText] (\getter -> NewEntry (read $ getter (newEntryActionReceiverSection)) (getter newEntryActionReceiverText))
 
-allHappers = [newEntryHapper]
+allActionReceivers = [newEntryActionReceiver]
 
 
 retro_entry entry = Tag "span" [] $ ValueFuncCall showEntryText [entry]
@@ -205,9 +204,9 @@ sample_data = build_data
 
 retro_page initial_section = Values [(Tag "h1" [] $ Text "Retro"),
                                      retro,
-                                     HapperReceiver newEntryHapper [
-                                       HapperInput newEntryHapperSection (DropdownV possibleSectionStrings $ show initial_section),
-                                       HapperInput newEntryHapperText Textfield
+                                     ActionReceiverValue newEntryActionReceiver [
+                                       ActionReceiverInput newEntryActionReceiverSection (DropdownV possibleSectionStrings $ show initial_section),
+                                       ActionReceiverInput newEntryActionReceiverText Textfield
                                      ]]
 
 wrap_in_html body = Tag "html" [] $ Values [
