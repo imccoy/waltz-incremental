@@ -42,21 +42,27 @@ instance Show Func where
   show (FuncAssociationWalk source target) = "func: " ++ source ++ " -> " ++ target
   show _ = "func"
 
+xmlencode [] = []
+xmlencode ('"':xs) = "&quot;" ++ (xmlencode xs)
+xmlencode ('<':xs) = "&lt;" ++ (xmlencode xs)
+xmlencode ('>':xs) = "&gt;" ++ (xmlencode xs)
+xmlencode (c:xs) = c:(xmlencode xs)
 
-drawPage :: Value -> EntityData -> String
-drawPage val dta = drawPageValue val 0
+drawPage :: Value -> EntityData -> Action -> String
+drawPage val dta causingAction = drawPageValue val 0
   where
     line indent string = concat $ (replicate indent "  ") ++ [string, "\n"]
     drawPageValue (Tag name attrs child) lvl = line lvl ("<" ++ name ++ (attrString attrs) ++  ">") ++ 
                                                drawPageValue child (lvl + 1) ++
                                                line lvl ("</" ++ name ++ ">")
-      where attrString attrs = concat $ map (\(name, value) -> concat [" ", name, "=\"", value, "\""]) attrs
+      where attrString attrs = concat $ map (\(name, value) -> concat [" ", name, "=\"", (xmlencode value), "\""]) attrs
     drawPageValue (Text text) lvl = line lvl text
     drawPageValue (Values values) lvl = concat $ map (\v -> drawPageValue v lvl) values 
     drawPageValue func_call@(ValueFuncCall _ _) lvl = drawPageValue (eval func_call) lvl
     drawPageValue (ValueEntity entity) lvl = error ("can't draw value: entity " ++ (show entity))
-    drawPageValue (ActionReceiverValue actionReceiver values) lvl = drawPageValue (Tag "form" [("method", "post")] $ Values (input:values)) lvl
-       where input = Tag "input" [("type", "hidden"), ("name", "actionReceiver"), ("value", actionReceiverName actionReceiver)] $ Values []
+    drawPageValue (ActionReceiverValue actionReceiver values) lvl = drawPageValue (Tag "form" [("method", "post")] $ Values (goingTo:comingFrom:values)) lvl
+       where goingTo    = Tag "input" [("type", "hidden"), ("name", "actionReceiver"), ("value", actionReceiverName actionReceiver)] $ Values []
+             comingFrom = Tag "input" [("type", "hidden"), ("name", "actionSource"), ("value", show causingAction)] $ Values []
     drawPageValue (ActionReceiverInput actionReceiverField Textfield) lvl = drawPageValue (Tag "input" [("name", fieldName actionReceiverField)] $ Values []) lvl
     drawPageValue (ActionReceiverInput actionReceiverField (Dropdown options)) lvl = drawSelect actionReceiverField options "" lvl
     drawPageValue (ActionReceiverInput actionReceiverField (DropdownV options def)) lvl = drawSelect actionReceiverField options def lvl
@@ -126,7 +132,7 @@ app db request = do current_db <- tryIO $ readIORef db
                     let request_body_query = parseQuery $ B.concat request_body_chunks
                     let action = processRequest request current_db request_body_query
                     let actions = actionsFor action
-                    let (response, new_db) = processActions actions current_db
+                    let (response, new_db) = processActions action actions current_db
                     tryIO $ writeIORef db new_db
                     return response
 
@@ -140,11 +146,29 @@ lastInQueryString query name = case filter (\(n, v) -> n == (B8.pack name)) $ qu
                                  lookup_matches -> B8.unpack $ fromJust $ snd $ last $ lookup_matches
 
 actionReceiverToAction request_body_query = let action_receiver_name = lastInQueryString request_body_query "actionReceiver"
+                                                last_action = read $ lastInQueryString request_body_query "actionSource"
                                                 action_receiver = last $ filter (\h -> (actionReceiverName h) == action_receiver_name) allActionReceivers
                                                 getter action_receiver_field = lastInQueryString request_body_query $ fieldName action_receiver_field
-                                             in (actionReceiverBuilder action_receiver) getter
+                                             in case validityErrors action_receiver getter of
+                                                  []     -> (actionReceiverBuilder action_receiver) getter
+                                                  errors -> (last_action `actionWith` action_receiver) errors
 
-processActions actions current_db = processActions' actions current_db Nothing
+actionWith :: Action -> ActionReceiver -> [(ActionReceiverField,String)] -> Action
+actionWith a receiver errors = a
+
+validityErrors (ActionReceiver _ fields _) getter = errors fields
+  where errors (field:fields) = fieldErrors field (validators field) $ errors fields
+        errors [] = []
+        fieldErrors field (v:vs) es = validate field v $ fieldErrors field vs es
+        fieldErrors field [] es = es
+        validate field (EnsureIsOneOf possibilities) errors = case filter ((==) $ getter field) possibilities of
+                                                               []        -> (field,"not a valid possibility"):errors
+                                                               otherwise -> errors
+        validate field (EnsureIsNotEmpty) errors = case (getter field) == "" of
+                                                     True  -> (field,"must not be empty"):errors
+                                                     False -> errors
+
+processActions initial_action actions current_db = processActions' actions current_db Nothing
   where
     processActions' ((AddPropertyOn entity property):actions) current_db page = processActions' actions (add_entity entity property current_db) page
     processActions' ((ShowPage page):actions) current_db Nothing = processActions' actions current_db (Just page)
@@ -152,7 +176,7 @@ processActions actions current_db = processActions' actions current_db Nothing
       where response = responseLBS
                                 status200
                                 [("Content-Type", B8.pack "text/html")]
-                                (LB8.pack $ drawPage (wrap_in_html $ page) current_db)
+                                (LB8.pack $ drawPage (wrap_in_html $ page) current_db initial_action)
 
 main = do
     putStrLn $ "http://localhost:8080/"
@@ -164,12 +188,27 @@ main = do
 data Section = Good | Bad | Confusing
   deriving (Show, Read, Eq)
 data Entry = Entry String
-  deriving (Show, Eq)
+  deriving (Show, Read, Eq)
 
 data Entity = EntitySection Section | EntityEntry Entry
-  deriving (Show, Eq)
+  deriving (Show, Read, Eq)
 
 data Action = AddPropertyOn Entity Entity | ShowPage Value | NewEntry Section String | ShowRetro Section
+
+readStringPair :: String -> (String, String)
+readStringPair string = read string
+
+instance Show Action where
+  show (NewEntry section string) = show ("NewEntry", show (section, string))
+  show (ShowRetro section) = show ("ShowRetro", show section)
+
+instance Read Action where
+  readsPrec _ string = let action = case readStringPair string of
+                                      ("NewEntry", info)  -> let (section, string) = read info
+                                                             in NewEntry section string
+                                      ("ShowRetro", info) -> let section = read info
+                                                             in ShowRetro section
+                        in [(action, "")]
 
 
 defaultAction = ShowRetro Good
