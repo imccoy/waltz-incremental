@@ -17,6 +17,14 @@ import qualified Data.ByteString as B
 -- framework stuff
 import Debug.Trace
 
+data Effect = AddPropertyOn Entity EntityValue | ShowPage Value
+data ActionResult = MoreActions [Action] | ActionEffect Effect
+
+effectsFor dta action = effectsFor' dta [action] []
+  where effectsFor' dta [] effects = effects
+        effectsFor' dta (a:as) effects =  case actionResult dta a of
+                           MoreActions actions -> effectsFor' dta (as ++ actions) effects
+                           ActionEffect effect -> effectsFor' dta as (effect:effects)
 
 -- framework: page display
 follow_to source target = FuncAssociationWalk source target
@@ -156,15 +164,15 @@ app :: IORef EntityData -> Application
 app db request = do current_db <- tryIO $ readIORef db
                     request_body_chunks <- EL.consume
                     let request_body_query = parseQuery $ B.concat request_body_chunks
-                    let action = processRequest request current_db request_body_query
-                    let actions = actionsFor current_db action
-                    let (response, new_db) = processActions action actions current_db
+                    let (last_action, action) = processRequest request current_db request_body_query
+                    let effects = effectsFor current_db action
+                    let (response, new_db) = processEffects action effects current_db last_action
                     tryIO $ writeIORef db new_db
                     return response
 
 processRequest request current_db request_body_query = case parseMethod $ requestMethod request of
                                                          (Right POST) ->  actionReceiverToAction request_body_query
-                                                         otherwise -> defaultAction
+                                                         otherwise -> (defaultAction, defaultAction) -- TODO: better cope with these cases: no action to take, take the last action but augment with error information, take the last action but pre-fill some form stuff
 
 lastInQueryString :: Query -> String -> String
 lastInQueryString query name = case filter (\(n, v) -> n == (B8.pack name)) $ query of
@@ -176,8 +184,8 @@ actionReceiverToAction request_body_query = let action_receiver_name = lastInQue
                                                 action_receiver = last $ filter (\h -> (actionReceiverName h) == action_receiver_name) allActionReceivers
                                                 getter action_receiver_field = lastInQueryString request_body_query $ fieldName action_receiver_field
                                              in case validityErrors action_receiver getter of
-                                                  []     -> (actionReceiverBuilder action_receiver) getter
-                                                  errors -> (last_action `actionWith` action_receiver) -- include errors too, somehow
+                                                  []     -> (last_action, (actionReceiverBuilder action_receiver) getter)
+                                                  errors -> (last_action, last_action `actionWith` action_receiver) -- include errors too, somehow
 
 actionWith a receiver = a
 
@@ -193,15 +201,19 @@ validityErrors (ActionReceiver _ fields _) getter = errors fields
                                                      True  -> (field,"must not be empty"):errors
                                                      False -> errors
 
-processActions initial_action actions current_db = processActions' actions current_db Nothing
+processEffects initial_action effects current_db last_action = processEffects' effects current_db Nothing
   where
-    processActions' ((AddPropertyOn entity property):actions) current_db page = processActions' actions (add_entity entity property current_db) page
-    processActions' ((ShowPage page):actions) current_db Nothing = processActions' actions current_db (Just page)
-    processActions' [] current_db (Just page) = (response, current_db)
+    processEffects' ((AddPropertyOn entity property):effects) current_db page = processEffects' effects (add_entity entity property current_db) page
+    processEffects' ((ShowPage page):effects) current_db Nothing = processEffects' effects current_db (Just page)
+    processEffects' [] current_db Nothing = processEffects' [] current_db (Just $ showPageFromEffects $ effectsFor current_db last_action)
+      where showPageFromEffects [] = error ("no show page effect for " ++ (show last_action))
+            showPageFromEffects ((ShowPage v):_) = v
+            showPageFromEffects (_:effects) = showPageFromEffects effects
+    processEffects' [] current_db (Just page) = (response, current_db)
       where response = responseLBS
                                 status200
                                 [("Content-Type", B8.pack "text/html")]
-                                (LB8.pack $ drawPage (wrap_in_html $ page) current_db initial_action)
+                                (LB8.pack $ drawPage (wrap_in_html $ page) current_db last_action)
 
 main = do
     putStrLn $ "http://localhost:8080/"
@@ -223,28 +235,16 @@ data EntityValue = EntitySection Section | EntityEntry Entry
 hasSectionMood desired_mood (EntitySection section@(Section _ mood)) = desired_mood == mood
 hasSectionMood desired_mood section = False
 
-data Action = AddPropertyOn Entity EntityValue | ShowPage Value | NewEntry SectionMood String | ShowRetro
+data Action = NewEntry SectionMood String | ShowRetro
+  deriving (Show, Read)
 
 readStringPair :: String -> (String, String)
 readStringPair string = read string
 
-instance Show Action where
-  show (NewEntry section string) = show ("NewEntry", show (section, string))
-  show (ShowRetro) = show ("ShowRetro", "")
-
-instance Read Action where
-  readsPrec _ string = let action = case readStringPair string of
-                                      ("NewEntry", info)  -> let (section, string) = read info
-                                                             in NewEntry section string
-                                      ("ShowRetro", info) -> ShowRetro
-                        in [(action, "")]
-
-
 defaultAction = ShowRetro
 
-actionsFor dta (ShowRetro) = [ShowPage $ retro_page]
-actionsFor dta (NewEntry section text) = [AddPropertyOn (entityWithValue dta (hasSectionMood section)) (EntityEntry $ Entry text),
-                                          (ShowPage retro_page) `actionWith` section]
+actionResult dta (ShowRetro) = ActionEffect $ ShowPage retro_page
+actionResult dta (NewEntry section text) = ActionEffect $ AddPropertyOn (entityWithValue dta (hasSectionMood section)) (EntityEntry $ Entry text)
 
 possibleSectionStrings = ["Good", "Bad", "Confusing"]
 
