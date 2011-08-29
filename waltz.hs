@@ -1,14 +1,25 @@
 {-# LANGUAGE OverloadedStrings #-}
-import Data.Enumerator (tryIO)
-import qualified Data.Enumerator.List as EL
-import Data.IORef
-import Data.Maybe (fromJust)
-import Network.Wai
-import Network.HTTP.Types
-import Network.Wai.Handler.Warp (run)
+import Control.Monad (forM_)
+
 import qualified Data.ByteString.Lazy.Char8 as LB8
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString as B
+
+import Data.Enumerator (tryIO)
+import qualified Data.Enumerator.List as EL
+
+import Data.IORef
+import Data.Maybe (fromJust)
+
+import Network.Wai
+import Network.HTTP.Types
+import Network.Wai.Handler.Warp (run)
+
+import Text.Blaze.Html5 hiding (head, map)
+import Text.Blaze.Html5.Attributes
+import qualified Text.Blaze.Html5 as H
+import qualified Text.Blaze.Html5.Attributes as A
+import Text.Blaze.Renderer.Utf8 (renderHtml)
 
 -- TODOS
 -- How do you make two different actionreceivers using two different columns of a html table?
@@ -17,7 +28,7 @@ import qualified Data.ByteString as B
 -- framework stuff
 import Debug.Trace
 
-data Effect = AddPropertyOn Entity EntityValue | ShowPage Value
+data Effect = AddPropertyOn Entity EntityValue | ShowPage (EntityData -> Action -> Html)
 data ActionResult = MoreActions [Action] | ActionEffect Effect
 
 effectsFor dta action = effectsFor' dta [action] []
@@ -27,84 +38,24 @@ effectsFor dta action = effectsFor' dta [action] []
                            ActionEffect effect -> effectsFor' dta as (effect:effects)
 
 -- framework: page display
-follow_to source target = FuncAssociationWalk source target
-showValueAsString = FuncF (\(ValueEntity entity) -> Text $ show entity)
-showSectionText = FuncE getText
-  where getText dta (ValueEntity entity) = case (entityValueItem dta entity) of
-                                             EntitySection (Section text _) -> Text text
+showSectionText dta ent = toHtml $ getText dta ent
+  where getText dta entity = case (entityValueItem dta entity) of
+                                             EntitySection (Section text _) -> text
                                              e                              -> error $ "can't get text " ++ (show e)
-        getText dta e = error $ "can't get text " ++ (show e)
-showEntryText = FuncE getText
-  where getText dta (ValueEntity entity) = case (entityValueItem dta entity) of
-                                             EntityEntry (Entry text) -> Text text
+showEntryText dta ent = toHtml $ getText dta ent
+  where getText dta entity = case (entityValueItem dta entity) of
+                                             EntityEntry (Entry text) -> text
                                              e                        -> error $ "can't get text " ++ (show e)
-        getText dta e = error $ "can't get text " ++ (show e)
 
 
-data Value = Tag String [(String, String)] Value
-           | Text String
-           | ValueEntity Entity
-           | ValueFuncCall Func [Value]
-           | Values [Value]
-           | ActionReceiverValue ActionReceiver [Value]
-           | ActionReceiverInput ActionReceiverField ActionReceiverControl
-  deriving (Show)
+actionReceiverHtml actionReceiver causingAction children = H.form ! method "post" $ do
+                                                             input ! type_ "hidden" ! name "actionReceiver" ! value (toValue $ actionReceiverName actionReceiver)
+                                                             input ! type_ "hidden" ! name "actionSource" ! value (toValue $ show causingAction)
+                                                             children
 
-data Func = FuncAssociationWalk String String | FuncEntityWhere (EntityValue -> Bool) | FuncMap (Value -> Value) | FuncF (Value -> Value) | FuncE (EntityData -> Value -> Value)
-
-instance Show Func where
-  show (FuncAssociationWalk source target) = "func: " ++ source ++ " -> " ++ target
-  show _ = "func"
-
-xmlencode [] = []
-xmlencode ('"':xs) = "&quot;" ++ (xmlencode xs)
-xmlencode ('<':xs) = "&lt;" ++ (xmlencode xs)
-xmlencode ('>':xs) = "&gt;" ++ (xmlencode xs)
-xmlencode (c:xs) = c:(xmlencode xs)
-
-drawPage :: Value -> EntityData -> Action -> String
-drawPage val dta causingAction = drawPageValue val 0
-  where
-    line indent string = concat $ (replicate indent "  ") ++ [string, "\n"]
-    drawPageValue (Tag name attrs child) lvl = line lvl ("<" ++ name ++ (attrString attrs) ++  ">") ++ 
-                                               drawPageValue child (lvl + 1) ++
-                                               line lvl ("</" ++ name ++ ">")
-      where attrString attrs = concat $ map (\(name, value) -> concat [" ", name, "=\"", (xmlencode value), "\""]) attrs
-    drawPageValue (Text text) lvl = line lvl text
-    drawPageValue (Values values) lvl = concat $ map (\v -> drawPageValue v lvl) values 
-    drawPageValue func_call@(ValueFuncCall _ _) lvl = drawPageValue (eval func_call) lvl
-    drawPageValue (ValueEntity entity) lvl = error ("can't draw value: entity " ++ (show entity))
-    drawPageValue (ActionReceiverValue actionReceiver values) lvl = drawPageValue (Tag "form" [("method", "post")] $ Values (goingTo:comingFrom:values)) lvl
-       where goingTo    = Tag "input" [("type", "hidden"), ("name", "actionReceiver"), ("value", actionReceiverName actionReceiver)] $ Values []
-             comingFrom = Tag "input" [("type", "hidden"), ("name", "actionSource"), ("value", show causingAction)] $ Values []
-    drawPageValue (ActionReceiverInput actionReceiverField Textfield) lvl = drawPageValue (Tag "input" [("name", fieldName actionReceiverField)] $ Values []) lvl
-    drawPageValue (ActionReceiverInput actionReceiverField (Dropdown options)) lvl = drawSelect actionReceiverField options "" lvl
-    drawPageValue (ActionReceiverInput actionReceiverField (DropdownV options def)) lvl = drawSelect actionReceiverField options def lvl
-    drawSelect actionReceiverField options def lvl = drawPageValue (Tag "select" [("name", fieldName actionReceiverField)] $ Values optionTags) lvl
-       where optionTags = map (\option -> Tag "option" (attrs option) $ Text option) options
-             attrs option = if option == def then [("selected", "selected")] else []
-
-    eval :: Value -> Value
-    eval (ValueFuncCall func args) = invoke func args
-    eval v = v
-
-    invoke :: Func -> [Value] -> Value
-    invoke func args = invoke' func (map eval args)
-      where
-        invoke' (FuncAssociationWalk source_type attr) [ValueEntity entity] = Values $ map ValueEntity $ lookup_related dta entity
-        invoke' (FuncAssociationWalk source_type attr) vs = error $ "Can't walk association over " ++ (show vs)
-        invoke' (FuncMap f) [Values vs] = Values $ map f vs
-        invoke' (FuncMap f) vs = Values $ map f vs
-        invoke' (FuncEntityWhere f) [] = ValueEntity $ entityWithValue dta f
-        invoke' (FuncF f) [v] = f v
-        invoke' (FuncF f) [] = error "No arguments to singular function"
-        invoke' (FuncF f) _ = error "Too many arguments to singular function"
-        invoke' (FuncE f) [v] = f dta v
-        invoke' (FuncE f) [] = error "No arguments to singular entity function"
-        invoke' (FuncE f) _ = error "Too many arguments to singular entity function"
-
-
-
+actionReceiverInput actionReceiverField Textfield = input ! name (toValue $ fieldName actionReceiverField)
+actionReceiverInput actionReceiverField (Dropdown options) = select ! name (toValue $ fieldName actionReceiverField) $ do
+                                                               forM_ options (\optionText -> option $ toHtml optionText)
 
 -- framework: data store
 
@@ -213,7 +164,7 @@ processEffects initial_action effects current_db last_action = processEffects' e
       where response = responseLBS
                                 status200
                                 [("Content-Type", B8.pack "text/html")]
-                                (LB8.pack $ drawPage (wrap_in_html $ page) current_db last_action)
+                                (renderHtml (wrap_in_html $ page current_db last_action))
 
 main = do
     putStrLn $ "http://localhost:8080/"
@@ -255,15 +206,17 @@ newEntryActionReceiver = ActionReceiver "newEntry" [newEntryActionReceiverSectio
 
 allActionReceivers = [newEntryActionReceiver]
 
-retro_entry entry = Tag "span" [] $ ValueFuncCall showEntryText [entry]
+retro_entry dta entry = H.span $ showEntryText dta entry
 
-retro_entries section = Tag "div" [] $ Values [
-                                      (Tag "h2" [] $ ValueFuncCall showSectionText [section]),
-				      (ValueFuncCall (FuncMap retro_entry) [ValueFuncCall ("Section" `follow_to` "Entry") [section]])]
+retro_entries dta section = H.div $ do
+                              h2 $ showSectionText dta section
+                              let entries = lookup_related dta section
+                              forM_ entries (retro_entry dta)
 
-retro_view = Tag "div" [] $ Values [retro_entries (ValueFuncCall (FuncEntityWhere $ hasSectionMood Good) []),
-                                    retro_entries (ValueFuncCall (FuncEntityWhere $ hasSectionMood Bad) []),
-                                    retro_entries (ValueFuncCall (FuncEntityWhere $ hasSectionMood Confusing) [])]
+retro_view dta = H.div $ do
+                   retro_entries dta $ entityWithValue dta (hasSectionMood Good)
+                   retro_entries dta $ entityWithValue dta $ hasSectionMood Bad
+                   retro_entries dta $ entityWithValue dta $ hasSectionMood Confusing
            
 sample_data = let (good, dta) = new_entity (EntitySection $ Section "Good" Good) emptyData
                   (bad, dta') = new_entity (EntitySection $ Section "Bad" Bad) dta
@@ -274,15 +227,16 @@ sample_data = let (good, dta) = new_entity (EntitySection $ Section "Good" Good)
                       add_entity bad (EntityEntry $ Entry "It's Ugly")
                       ]
 
-retro_page = Values [(Tag "h1" [] $ Text "Retro"),
-                                     retro_view,
-                                     ActionReceiverValue newEntryActionReceiver [
-                                       ActionReceiverInput newEntryActionReceiverSectionMood $ Dropdown possibleSectionStrings,
-                                       ActionReceiverInput newEntryActionReceiverText Textfield
-                                     ]]
+retro_page dta causingAction = H.div $ do
+                                 h1 "Retro"
+                                 retro_view dta
+                                 actionReceiverHtml newEntryActionReceiver causingAction $ do
+                                   actionReceiverInput newEntryActionReceiverSectionMood $ Dropdown possibleSectionStrings
+                                   actionReceiverInput newEntryActionReceiverText Textfield
 
-wrap_in_html body = Tag "html" [] $ Values [
-                                    (Tag "head" [] $ Tag "title" [] $ Text "Waltz App"),
-                                    (Tag "body" [] body)]
+wrap_in_html body = docTypeHtml $ do 
+                      H.head $ do
+                        H.title "Waltz App"
+                      H.body body
 
 
