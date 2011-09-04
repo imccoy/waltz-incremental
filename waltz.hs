@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Waltz where
 import Control.Monad (forM_)
 
 import qualified Data.ByteString.Lazy.Char8 as LB8
@@ -143,16 +142,11 @@ data Action = NewEntry SectionMood String | DeleteEntry SectionMood String | Sho
   deriving (Show, Read)
 
 data RetroState = RetroState { stateSections :: [Section]  }
-  deriving (Show)
 type ApplicationState = RetroState
 applicationState actions = RetroState { stateSections = [sectionWith Good, sectionWith Bad, sectionWith Confusing] }
-  where sectionWith sectionMood = let sectionActions = filter (\action -> actionSection action == sectionMood) actions
-                                      sectionEntries = foldl performAction [] sectionActions
+  where sectionWith sectionMood = let sectionActions = filter (\(NewEntry section _) -> section == sectionMood) actions
+                                      sectionEntries = map (\(NewEntry _ text) -> Entry text) sectionActions
                                    in Section (show sectionMood) sectionMood sectionEntries
-        actionSection (NewEntry section _) = section
-        actionSection (DeleteEntry section _) = section
-        performAction entries (NewEntry _ text) = ((Entry text):entries)
-        performAction entries (DeleteEntry _ text_to_delete)= filter (\(Entry text) -> text /= text_to_delete) entries
 
 sectionWithMood desired_mood retro_state = head $ filter (\(Section _ mood _) -> mood == desired_mood) retro_state
 showSectionText (Section text _ _) = toHtml text
