@@ -144,7 +144,9 @@ data Action = NewEntry SectionMood String | ShowRetro
 data RetroState = RetroState { stateSections :: [Section]  }
 type ApplicationState = RetroState
 applicationState actions = RetroState { stateSections = [sectionWith Good, sectionWith Bad, sectionWith Confusing] }
-  where sectionWith sectionMood = Section (show sectionMood) sectionMood $ map (\(NewEntry _ text) -> Entry text) $ filter (\(NewEntry section _) -> section == sectionMood) actions
+  where sectionWith sectionMood = let sectionActions = filter (\(NewEntry section _) -> section == sectionMood) actions
+                                      sectionEntries = map (\(NewEntry _ text) -> Entry text) sectionActions
+                                   in Section (show sectionMood) sectionMood sectionEntries
 
 sectionWithMood desired_mood retro_state = head $ filter (\(Section _ mood _) -> mood == desired_mood) retro_state
 showSectionText (Section text _ _) = toHtml text
