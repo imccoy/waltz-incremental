@@ -138,7 +138,7 @@ data Section = Section String SectionMood [Entry]
 data Entry = Entry String
   deriving (Show, Read, Eq)
 
-data Action = NewEntry SectionMood String | ShowRetro
+data Action = NewEntry SectionMood String | DeleteEntry SectionMood String | ShowRetro
   deriving (Show, Read)
 
 data RetroState = RetroState { stateSections :: [Section]  }
