@@ -28,7 +28,7 @@ import Text.Blaze.Renderer.Utf8 (renderHtml)
 -- framework stuff
 import Debug.Trace
 
-data Effect = AddPropertyOn Entity EntityValue | ShowPage (EntityData -> Action -> Html)
+data Effect = YieldEffect Action | ShowPage (ApplicationState -> Action -> Html)
 data ActionResult = MoreActions [Action] | ActionEffect Effect
 
 effectsFor dta action = effectsFor' dta [action] []
@@ -38,14 +38,6 @@ effectsFor dta action = effectsFor' dta [action] []
                            ActionEffect effect -> effectsFor' dta as (effect:effects)
 
 -- framework: page display
-showSectionText dta ent = toHtml $ getText dta ent
-  where getText dta entity = case (entityValueItem dta entity) of
-                                             EntitySection (Section text _) -> text
-                                             e                              -> error $ "can't get text " ++ (show e)
-showEntryText dta ent = toHtml $ getText dta ent
-  where getText dta entity = case (entityValueItem dta entity) of
-                                             EntityEntry (Entry text) -> text
-                                             e                        -> error $ "can't get text " ++ (show e)
 
 
 actionReceiverHtml actionReceiver causingAction children = H.form ! method "post" $ do
@@ -56,40 +48,6 @@ actionReceiverHtml actionReceiver causingAction children = H.form ! method "post
 actionReceiverInput actionReceiverField Textfield = input ! name (toValue $ fieldName actionReceiverField)
 actionReceiverInput actionReceiverField (Dropdown options) = select ! name (toValue $ fieldName actionReceiverField) $ do
                                                                forM_ options (\optionText -> option $ toHtml optionText)
-
--- framework: data store
-
-data EntityData = EntityData Integer [EntityRelationship] [EntityValueItem]
-emptyData = EntityData 0 [] []
-data EntityRelationship = EntityRelationship Entity Entity
-data EntityValueItem = EntityValueItem Entity EntityValue
-
-data Entity = Entity Integer
-  deriving (Show, Eq)
-
-build_data :: EntityData -> [EntityData -> EntityData] -> EntityData
-build_data d [] = d
-build_data d (f:fs) = build_data (f d) fs
-
-new_entity value (EntityData n rs vs) = (entity, EntityData (n+1) rs ((EntityValueItem entity value):vs))
-  where entity = Entity $ n+1
-add_entity parent child dta = let (entity, dta') = new_entity child dta
-                               in case dta' of EntityData n rs vs -> EntityData n ((EntityRelationship parent entity):rs) vs
-
-lookup_related :: EntityData -> Entity -> [Entity]
-lookup_related (EntityData _ dta _) entity = map (\(EntityRelationship a b) -> b) $ (filter matchesEntity) dta
-  where matchesEntity (EntityRelationship a b) = a == entity
-
-entityValueItem :: EntityData -> Entity -> EntityValue
-entityValueItem (EntityData _ _ dta) entity = (\(EntityValueItem a b) -> b) $ head $ (filter matchesEntity) dta
-  where matchesEntity (EntityValueItem a _) = a == entity
-
-entityWithValue :: EntityData -> (EntityValue -> Bool) -> Entity
-entityWithValue (EntityData _ _ dta) matcher = case (filter matchesValue) dta of
-                                                 ((EntityValueItem a b):_) -> a
-                                                 otherwise -> error "no entity with matching value"
-                                               where matchesValue (EntityValueItem _ v) = matcher v
-
 
 -- framework: user input
 
@@ -111,7 +69,7 @@ instance Show ActionReceiver where
 
 -- http
 
-app :: IORef EntityData -> Application 
+app :: IORef [Action] -> Application 
 app db request = do current_db <- tryIO $ readIORef db
                     request_body_chunks <- EL.consume
                     let request_body_query = parseQuery $ B.concat request_body_chunks
@@ -154,7 +112,7 @@ validityErrors (ActionReceiver _ fields _) getter = errors fields
 
 processEffects initial_action effects current_db last_action = processEffects' effects current_db Nothing
   where
-    processEffects' ((AddPropertyOn entity property):effects) current_db page = processEffects' effects (add_entity entity property current_db) page
+    processEffects' ((YieldEffect action):effects) current_db page = processEffects' effects (current_db ++ [action]) page
     processEffects' ((ShowPage page):effects) current_db Nothing = processEffects' effects current_db (Just page)
     processEffects' [] current_db Nothing = processEffects' [] current_db (Just $ showPageFromEffects $ effectsFor current_db last_action)
       where showPageFromEffects [] = error ("no show page effect for " ++ (show last_action))
@@ -164,7 +122,7 @@ processEffects initial_action effects current_db last_action = processEffects' e
       where response = responseLBS
                                 status200
                                 [("Content-Type", B8.pack "text/html")]
-                                (renderHtml (wrap_in_html $ page current_db last_action))
+                                (renderHtml (wrap_in_html $ page (applicationState current_db) last_action))
 
 main = do
     putStrLn $ "http://localhost:8080/"
@@ -175,19 +133,22 @@ main = do
 
 data SectionMood = Good | Bad | Confusing
   deriving (Show, Read, Eq)
-data Section = Section String SectionMood
+data Section = Section String SectionMood [Entry]
   deriving (Show, Read, Eq)
 data Entry = Entry String
   deriving (Show, Read, Eq)
 
-data EntityValue = EntitySection Section | EntityEntry Entry
-  deriving (Show, Read, Eq)
-
-hasSectionMood desired_mood (EntitySection section@(Section _ mood)) = desired_mood == mood
-hasSectionMood desired_mood section = False
-
 data Action = NewEntry SectionMood String | ShowRetro
   deriving (Show, Read)
+
+data RetroState = RetroState { stateSections :: [Section]  }
+type ApplicationState = RetroState
+applicationState actions = RetroState { stateSections = [sectionWith Good, sectionWith Bad, sectionWith Confusing] }
+  where sectionWith sectionMood = Section (show sectionMood) sectionMood $ map (\(NewEntry _ text) -> Entry text) $ filter (\(NewEntry section _) -> section == sectionMood) actions
+
+sectionWithMood desired_mood retro_state = head $ filter (\(Section _ mood _) -> mood == desired_mood) retro_state
+showSectionText (Section text _ _) = toHtml text
+showEntryText (Entry text) = toHtml text
 
 readStringPair :: String -> (String, String)
 readStringPair string = read string
@@ -195,7 +156,7 @@ readStringPair string = read string
 defaultAction = ShowRetro
 
 actionResult dta (ShowRetro) = ActionEffect $ ShowPage retro_page
-actionResult dta (NewEntry section text) = ActionEffect $ AddPropertyOn (entityWithValue dta (hasSectionMood section)) (EntityEntry $ Entry text)
+actionResult dta action@(NewEntry section text) = ActionEffect $ YieldEffect action
 
 possibleSectionStrings = ["Good", "Bad", "Confusing"]
 
@@ -206,30 +167,24 @@ newEntryActionReceiver = ActionReceiver "newEntry" [newEntryActionReceiverSectio
 
 allActionReceivers = [newEntryActionReceiver]
 
-retro_entry dta entry = H.span $ showEntryText dta entry
+retro_entry entry = H.span $ showEntryText entry
 
-retro_entries dta section = H.div $ do
-                              h2 $ showSectionText dta section
-                              let entries = lookup_related dta section
-                              forM_ entries (retro_entry dta)
+retro_entries section = H.div $ do
+                              h2 $ showSectionText section
+                              let (Section _ _ entries) = section
+                              forM_ entries (retro_entry)
 
-retro_view dta = H.div $ do
-                   retro_entries dta $ entityWithValue dta (hasSectionMood Good)
-                   retro_entries dta $ entityWithValue dta $ hasSectionMood Bad
-                   retro_entries dta $ entityWithValue dta $ hasSectionMood Confusing
+retro_view retro_state = H.div $ do
+                   retro_entries $ sectionWithMood Good retro_state
+                   retro_entries $ sectionWithMood Bad retro_state
+                   retro_entries $ sectionWithMood Confusing retro_state
            
-sample_data = let (good, dta) = new_entity (EntitySection $ Section "Good" Good) emptyData
-                  (bad, dta') = new_entity (EntitySection $ Section "Bad" Bad) dta
-                  (confusing, dta'') = new_entity (EntitySection $ Section "Ugly" Confusing) dta'
-               in build_data dta''
-                     [
-                      add_entity good (EntityEntry $ Entry "It's Okay"),
-                      add_entity bad (EntityEntry $ Entry "It's Ugly")
-                      ]
+sample_data = [NewEntry Good "It's Okay",
+               NewEntry Bad "It's Ugly"]
 
-retro_page dta causingAction = H.div $ do
+retro_page retro_state causingAction = H.div $ do
                                  h1 "Retro"
-                                 retro_view dta
+                                 retro_view $ stateSections retro_state
                                  actionReceiverHtml newEntryActionReceiver causingAction $ do
                                    actionReceiverInput newEntryActionReceiverSectionMood $ Dropdown possibleSectionStrings
                                    actionReceiverInput newEntryActionReceiverText Textfield
