@@ -9,7 +9,7 @@ import Data.Enumerator (tryIO)
 import qualified Data.Enumerator.List as EL
 
 import Data.IORef
-import Data.Maybe (fromJust, mapMaybe)
+import Data.Maybe (fromJust)
 
 import Network.Wai
 import Network.HTTP.Types
@@ -142,21 +142,11 @@ data Action = NewEntry SectionMood String | DeleteEntry SectionMood String | Sho
   deriving (Show, Read)
 
 data RetroState = RetroState { stateSections :: [Section]  }
-  deriving (Show)
 type ApplicationState = RetroState
 applicationState actions = RetroState { stateSections = [sectionWith Good, sectionWith Bad, sectionWith Confusing] }
-  where sectionWith sectionMood = let sectionActions = filter (\action -> sectionAction action == sectionMood) actions
-                                      sectionEntries = map (\(NewEntry _ text) -> Entry text) $ mapMaybe creationAction sectionActions
-                                      deletedEntries = map (\(DeleteEntry _ text) -> Entry text) $ mapMaybe deletionAction sectionActions
-                                      remainingEntries = filter (\entry -> all (/=entry) deletedEntries)  sectionEntries
-                                   in Section (show sectionMood) sectionMood remainingEntries
-        creationAction a@(NewEntry _ _) = Just a
-        creationAction _                = Nothing
-        deletionAction a@(DeleteEntry _ _) = Just a
-        deletionAction _                   = Nothing
-        sectionAction (NewEntry section _) = section
-        sectionAction (DeleteEntry section _) = section
-
+  where sectionWith sectionMood = let sectionActions = filter (\(NewEntry section _) -> section == sectionMood) actions
+                                      sectionEntries = map (\(NewEntry _ text) -> Entry text) sectionActions
+                                   in Section (show sectionMood) sectionMood sectionEntries
 
 sectionWithMood desired_mood retro_state = head $ filter (\(Section _ mood _) -> mood == desired_mood) retro_state
 showSectionText (Section text _ _) = toHtml text
