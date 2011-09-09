@@ -133,9 +133,9 @@ main = do
 
 data SectionMood = Good | Bad | Confusing
   deriving (Show, Read, Eq)
-data Section = Section String SectionMood [Entry]
+data Section = Section { sectionName :: String, sectionMood :: SectionMood, sectionEntries :: [Entry] }
   deriving (Show, Read, Eq)
-data Entry = Entry String
+data Entry = Entry { entryText :: String }
   deriving (Show, Read, Eq)
 
 data Action = NewEntry SectionMood String | DeleteEntry SectionMood String | ShowRetro
@@ -145,15 +145,10 @@ data RetroState = RetroState { stateSections :: [Section]  }
 type ApplicationState = RetroState
 applicationState actions = RetroState { stateSections = [sectionWith Good, sectionWith Bad, sectionWith Confusing] }
   where sectionWith sectionMood = let sectionActions = filter (\(NewEntry section _) -> section == sectionMood) actions
-                                      sectionEntries = map (\(NewEntry _ text) -> Entry text) sectionActions
-                                   in Section (show sectionMood) sectionMood sectionEntries
+                                      entries = map (\(NewEntry _ text) -> Entry { entryText = text }) sectionActions
+                                   in Section { sectionName = show sectionMood, sectionMood = sectionMood, sectionEntries = entries }
 
-sectionWithMood desired_mood retro_state = head $ filter (\(Section _ mood _) -> mood == desired_mood) retro_state
-showSectionText (Section text _ _) = toHtml text
-showEntryText (Entry text) = toHtml text
-
-readStringPair :: String -> (String, String)
-readStringPair string = read string
+sectionWithMood desired_mood retro_state = head $ filter (\section -> sectionMood section == desired_mood) retro_state
 
 defaultAction = ShowRetro
 
@@ -169,12 +164,11 @@ newEntryActionReceiver = ActionReceiver "newEntry" [newEntryActionReceiverSectio
 
 allActionReceivers = [newEntryActionReceiver]
 
-retro_entry entry = H.span $ showEntryText entry
+retro_entry entry = H.span $ toHtml $ entryText entry
 
 retro_entries section = H.div $ do
-                              h2 $ showSectionText section
-                              let (Section _ _ entries) = section
-                              forM_ entries (retro_entry)
+                              h2 $ toHtml $ sectionName section
+                              forM_ (sectionEntries section) retro_entry
 
 retro_view retro_state = H.div $ do
                    retro_entries $ sectionWithMood Good retro_state
