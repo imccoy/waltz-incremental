@@ -48,20 +48,23 @@ actionReceiverHtml actionReceiver causingAction children = H.form ! method "post
 actionReceiverInput actionReceiverField Textfield = input ! name (toValue $ fieldName actionReceiverField)
 actionReceiverInput actionReceiverField (Dropdown options) = select ! name (toValue $ fieldName actionReceiverField) $ do
                                                                forM_ options (\optionText -> option $ toHtml optionText)
+actionReceiverInput actionReceiverField (Hidden v) = input ! type_ "hidden" ! name (toValue $ fieldName actionReceiverField) ! value (toValue v)
+
+actionReceiverSend = input ! type_ "submit"
 
 -- framework: user input
 
-data Ensurer = EnsureIsOneOf [String] | EnsureIsNotEmpty
+data Ensurer = EnsureIsOneOf [String] | EnsureIsNotEmpty | EnsureIsIntegral
   deriving (Show)
 
 data ActionReceiverField = ActionReceiverField { fieldName :: String, validators :: [Ensurer] }
   deriving (Show)
 
-data ActionReceiver = ActionReceiver String [ActionReceiverField] ((ActionReceiverField -> String) -> Action)
+data ActionReceiver = ActionReceiver String [ActionReceiverField] ((ActionReceiverField -> String) -> Int -> Action)
 actionReceiverName (ActionReceiver name _ _) = name
 actionReceiverBuilder (ActionReceiver _ _ builder) = builder
 
-data ActionReceiverControl = Textfield | Dropdown [String] | DropdownV [String] String
+data ActionReceiverControl = Textfield | Dropdown [String] | Hidden String
   deriving (Show)
 
 instance Show ActionReceiver where
@@ -80,7 +83,7 @@ app db request = do current_db <- tryIO $ readIORef db
                     return response
 
 processRequest request current_db request_body_query = case parseMethod $ requestMethod request of
-                                                         (Right POST) ->  actionReceiverToAction request_body_query
+                                                         (Right POST) ->  actionReceiverToAction request_body_query (length current_db)
                                                          otherwise -> (defaultAction, defaultAction) -- TODO: better cope with these cases: no action to take, take the last action but augment with error information, take the last action but pre-fill some form stuff
 
 lastInQueryString :: Query -> String -> String
@@ -88,13 +91,17 @@ lastInQueryString query name = case filter (\(n, v) -> n == (B8.pack name)) $ qu
                                  []             -> error "nothing for " ++ name ++ " in " ++ (show query)
                                  lookup_matches -> B8.unpack $ fromJust $ snd $ last $ lookup_matches
 
-actionReceiverToAction request_body_query = let action_receiver_name = lastInQueryString request_body_query "actionReceiver"
-                                                last_action = read $ lastInQueryString request_body_query "actionSource"
-                                                action_receiver = last $ filter (\h -> (actionReceiverName h) == action_receiver_name) allActionReceivers
-                                                getter action_receiver_field = lastInQueryString request_body_query $ fieldName action_receiver_field
-                                             in case validityErrors action_receiver getter of
-                                                  []     -> (last_action, (actionReceiverBuilder action_receiver) getter)
-                                                  errors -> (last_action, last_action `actionWith` action_receiver) -- include errors too, somehow
+actionReceiverWithName name = case filter (\h -> (actionReceiverName h) == name) allActionReceivers of
+                                []        -> error $ "no receiver with name " ++ name
+                                receivers -> last receivers
+
+actionReceiverToAction request_body_query n = let action_receiver_name = lastInQueryString request_body_query "actionReceiver"
+                                                  last_action = read $ lastInQueryString request_body_query "actionSource"
+                                                  action_receiver = actionReceiverWithName action_receiver_name
+                                                  field_getter action_receiver_field = lastInQueryString request_body_query $ fieldName action_receiver_field
+                                               in case validityErrors action_receiver field_getter of
+                                                    []     -> (last_action, (actionReceiverBuilder action_receiver) field_getter n)
+                                                    errors -> (last_action, last_action `actionWith` action_receiver) -- include errors too, somehow
 
 actionWith a receiver = a
 
@@ -109,6 +116,9 @@ validityErrors (ActionReceiver _ fields _) getter = errors fields
         validate field (EnsureIsNotEmpty) errors = case (getter field) == "" of
                                                      True  -> (field,"must not be empty"):errors
                                                      False -> errors
+        validate field (EnsureIsIntegral) errors = case all (\c -> elem c "0123456789") $ getter field of
+                                                     False -> (field,"must be integral"):errors
+                                                     True  -> errors
 
 processEffects initial_action effects current_db last_action = processEffects' effects current_db Nothing
   where
@@ -135,55 +145,81 @@ data SectionMood = Good | Bad | Confusing
   deriving (Show, Read, Eq)
 data Section = Section { sectionName :: String, sectionMood :: SectionMood, sectionEntries :: [Entry] }
   deriving (Show, Read, Eq)
-data Entry = Entry { entryText :: String }
+data Entry = Entry { entryText :: String, entryIdent :: Ident }
   deriving (Show, Read, Eq)
 
-data Action = NewEntry SectionMood String | DeleteEntry SectionMood String | ShowRetro
+type Ident = Int
+
+data Action = NewEntry { newEntrySection :: SectionMood, newEntryText :: String, newEntryEntryIdent :: Ident } 
+            | DeleteEntry { deleteEntrySection :: SectionMood,  deleteEntryEntryIdent :: Ident, deleteEntryActionIdent :: Ident }
+            | ShowRetro
   deriving (Show, Read)
+
+isNewEntry (NewEntry _ _ _) = True
+isNewEntry _                = False
+isDeleteEntry (DeleteEntry _ _ _) = True
+isDeleteEntry _                   = False
+entryActionSection a
+  | isNewEntry a = newEntrySection a
+  | isDeleteEntry a = deleteEntrySection a
 
 data RetroState = RetroState { stateSections :: [Section]  }
 type ApplicationState = RetroState
 applicationState actions = RetroState { stateSections = [sectionWith Good, sectionWith Bad, sectionWith Confusing] }
-  where sectionWith sectionMood = let sectionActions = filter (\(NewEntry section _) -> section == sectionMood) actions
-                                      entries = map (\(NewEntry _ text) -> Entry { entryText = text }) sectionActions
+  where sectionWith sectionMood = let sectionActions = filter (\entryAction -> entryActionSection entryAction == sectionMood) actions
+                                      deleted_idents = map deleteEntryEntryIdent $ filter isDeleteEntry sectionActions
+                                      notDeleted x = all (/= newEntryEntryIdent x) deleted_idents
+                                      entries = [ Entry { entryText = newEntryText entryAction, entryIdent = newEntryEntryIdent entryAction }
+                                                   | entryAction <- filter notDeleted $ filter isNewEntry sectionActions]
                                    in Section { sectionName = show sectionMood, sectionMood = sectionMood, sectionEntries = entries }
 
-sectionWithMood desired_mood retro_state = head $ filter (\section -> sectionMood section == desired_mood) retro_state
+sectionWithMood mood retro_state = head $ filter (\section -> sectionMood section == mood) retro_state
 
 defaultAction = ShowRetro
 
 actionResult dta (ShowRetro) = ActionEffect $ ShowPage retro_page
-actionResult dta action@(NewEntry section text) = ActionEffect $ YieldEffect action
+actionResult dta action@(NewEntry section text ident) = ActionEffect $ YieldEffect action
+actionResult dta action@(DeleteEntry section entryIdent ident) = ActionEffect $ YieldEffect action
 
 possibleSectionStrings = ["Good", "Bad", "Confusing"]
 
 -- this process has waaaaaay too much boilerplate
-newEntryActionReceiverSectionMood = ActionReceiverField { fieldName = "sectionMood", validators = [EnsureIsOneOf possibleSectionStrings] }
+actionReceiverSectionMood = ActionReceiverField { fieldName = "sectionMood", validators = [EnsureIsOneOf possibleSectionStrings] }
+newEntryActionReceiverSectionMood = actionReceiverSectionMood
 newEntryActionReceiverText = ActionReceiverField { fieldName = "text", validators = [EnsureIsNotEmpty] }
 newEntryActionReceiver = ActionReceiver "newEntry" [newEntryActionReceiverSectionMood, newEntryActionReceiverText] (\getter -> NewEntry (read $ getter (newEntryActionReceiverSectionMood)) (getter newEntryActionReceiverText))
 
-allActionReceivers = [newEntryActionReceiver]
+deleteEntryActionReceiverSectionMood = actionReceiverSectionMood
+deleteEntryActionReceiverEntryIdent = ActionReceiverField { fieldName = "entryId", validators = [EnsureIsIntegral] }
+deleteEntryActionReceiver = ActionReceiver "deleteEntry" [deleteEntryActionReceiverSectionMood, deleteEntryActionReceiverEntryIdent] (\getter -> DeleteEntry (read $ getter deleteEntryActionReceiverSectionMood) (read $ getter deleteEntryActionReceiverEntryIdent))
 
-retro_entry entry = H.span $ toHtml $ entryText entry
+allActionReceivers = [newEntryActionReceiver, deleteEntryActionReceiver]
 
-retro_entries section = H.div $ do
-                              h2 $ toHtml $ sectionName section
-                              forM_ (sectionEntries section) retro_entry
+retro_entry entry section causing_action = H.span $ do
+                                             toHtml $ entryText entry
+                                             actionReceiverHtml deleteEntryActionReceiver causing_action $ do
+                                               actionReceiverInput deleteEntryActionReceiverSectionMood $ Hidden $ show $ sectionMood section
+                                               actionReceiverInput deleteEntryActionReceiverEntryIdent $ Hidden $ show $ entryIdent entry
+                                               actionReceiverSend
 
-retro_view retro_state = H.div $ do
-                   retro_entries $ sectionWithMood Good retro_state
-                   retro_entries $ sectionWithMood Bad retro_state
-                   retro_entries $ sectionWithMood Confusing retro_state
+retro_entries section causing_action = H.div $ do
+                                         h2 $ toHtml $ sectionName section
+                                         forM_ (sectionEntries section) $ (\e -> retro_entry e section causing_action)
+
+retro_view retro_state causing_action = H.div $ do
+                                          retro_entries (sectionWithMood Good retro_state) causing_action
+                                          retro_entries (sectionWithMood Bad retro_state) causing_action
+                                          retro_entries (sectionWithMood Confusing retro_state) causing_action
            
-sample_data = [NewEntry Good "It's Okay",
-               NewEntry Bad "It's Ugly"]
+sample_data = [NewEntry Good "It's Okay" 0,
+               NewEntry Bad "It's Ugly" 1]
 
-retro_page retro_state causingAction = H.div $ do
-                                 h1 "Retro"
-                                 retro_view $ stateSections retro_state
-                                 actionReceiverHtml newEntryActionReceiver causingAction $ do
-                                   actionReceiverInput newEntryActionReceiverSectionMood $ Dropdown possibleSectionStrings
-                                   actionReceiverInput newEntryActionReceiverText Textfield
+retro_page retro_state causing_action = H.div $ do
+                                          h1 "Retro"
+                                          retro_view (stateSections retro_state) causing_action
+                                          actionReceiverHtml newEntryActionReceiver causing_action $ do
+                                            actionReceiverInput newEntryActionReceiverSectionMood $ Dropdown possibleSectionStrings
+                                            actionReceiverInput newEntryActionReceiverText Textfield
 
 wrap_in_html body = docTypeHtml $ do 
                       H.head $ do
