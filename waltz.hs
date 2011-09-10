@@ -166,12 +166,12 @@ entryActionSection a
 data RetroState = RetroState { stateSections :: [Section]  }
 type ApplicationState = RetroState
 applicationState actions = RetroState { stateSections = [sectionWith Good, sectionWith Bad, sectionWith Confusing] }
-  where sectionWith sectionMood = let sectionActions = filter (\entryAction -> entryActionSection entryAction == sectionMood) actions
-                                      deleted_idents = map deleteEntryEntryIdent $ filter isDeleteEntry sectionActions
-                                      notDeleted x = all (/= newEntryEntryIdent x) deleted_idents
-                                      entries = [ Entry { entryText = newEntryText entryAction, entryIdent = newEntryEntryIdent entryAction }
-                                                   | entryAction <- filter notDeleted $ filter isNewEntry sectionActions]
-                                   in Section { sectionName = show sectionMood, sectionMood = sectionMood, sectionEntries = entries }
+  where sectionWith mood = let section_actions = filter (\entryAction -> entryActionSection entryAction == mood) actions
+                               deleted_idents = map deleteEntryEntryIdent $ filter isDeleteEntry section_actions
+                               notDeleted x = all (/= newEntryEntryIdent x) deleted_idents
+                               entries = [ Entry { entryText = newEntryText entryAction, entryIdent = newEntryEntryIdent entryAction }
+                                         | entryAction <- filter notDeleted $ filter isNewEntry section_actions]
+                            in Section { sectionName = show mood, sectionMood = mood, sectionEntries = entries }
 
 sectionWithMood mood retro_state = head $ filter (\section -> sectionMood section == mood) retro_state
 
