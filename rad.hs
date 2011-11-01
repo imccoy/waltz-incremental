@@ -3,14 +3,25 @@ import Outputable
  
 import GHC.Paths ( libdir )
 --GHC.Paths is available via cabal install ghc-paths
- 
+import Bag 
+import MonadUtils
+
 import DynFlags
 targetFile = "B.hs"
  
+-- findApplicationState lHsBinds = head $ bagToList $ filterBag matchApplicationState lHsBinds
+--   where matchApplicationState lBind = case unLoc lBind of
+--                                         FunBind id _ _ _ _ _ -> id == 
+
 main = do
    res <- example
    putStrLn $ showSDoc ( ppr res )
  
+processBind bind =
+  case (unLoc bind) of
+    (FunBind id infx (MatchGroup matches ty ) _ _ _) -> liftIO $ putStrLn $ showSDoc $ ppr ty
+    otherwise -> liftIO $ putStrLn "skipping something"
+
 example = 
     defaultErrorHandler defaultDynFlags $ do
       runGhc (Just libdir) $ do
@@ -25,10 +36,6 @@ example =
         p <- parseModule modSum
         t <- typecheckModule p
         d <- desugarModule t
-        l <- loadModule d
-        n <- getNamesInScope
-        c <- return $ coreModule d
- 
-        g <- getModuleGraph
-        mapM showModule g     
-        return $ (parsedSource d,"/n-----/n",  typecheckedSource d)
+        let s = typecheckedSource d
+        mapBagM processBind s
+        return s
