@@ -33,8 +33,7 @@ entryActionSection a
   | isNewEntry a = newEntrySection a
   | isDeleteEntry a = deleteEntrySection a
 
-data RetroState = RetroState { stateSections :: [Section]  }
-type ApplicationState = RetroState
+data ApplicationState = RetroState { stateSections :: [Section]  }
 applicationState actions = RetroState { stateSections = [sectionWith Good, sectionWith Bad, sectionWith Confusing] }
   where sectionWith mood = let section_actions = filter (\entryAction -> entryActionSection entryAction == mood) actions
                                deleted_idents = map deleteEntryEntryIdent $ filter isDeleteEntry section_actions
