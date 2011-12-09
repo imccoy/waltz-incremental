@@ -1,3 +1,4 @@
+import Control.Monad
 import Data.Maybe
 import Debug.Trace
 import IO
@@ -46,7 +47,8 @@ input_changes_in_arg fn var _ = []
 input_changes_in_deconstruction fn mod (Acon dcon tbinds vbinds exp) = let vbindexp (var, _) = Var (mod, var)
                                                                            vbindexps = map vbindexp vbinds
                                                                         in do recursive_call <- find_recursive_call fn vbindexps exp
-                                                                              return recursive_call
+                                                                              combiner <- find_combiner exp recursive_call
+                                                                              return (recursive_call, combiner)
 
 find_recursive_call fn potential_args exp = find_recursive_call' exp
   where
@@ -70,6 +72,58 @@ find_recursive_call fn potential_args exp = find_recursive_call' exp
     is_call expr fn = False
     is_arg exp2 vbind = exp2 == vbind
  
+ 
+find_combiner exp_after_deconstruction recursive_call = find_combiner' exp_after_deconstruction
+  where find_combiner' a@(App exp1 exp2)
+          | exp2 `same_app` recursive_call = function_identifier exp1
+          | otherwise                      = find_combiner' exp2 `mplus` find_combiner' exp1
+        find_combiner' (Appt exp _) = find_combiner' exp
+        find_combiner' (Lam _ exp) = find_combiner' exp
+        find_combiner' (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map find_combiner' (exp:(map alt_exp alts)) 
+        find_combiner' (Cast exp _) = find_combiner' exp
+        find_combiner' (Note _ exp) = find_combiner' exp
+        find_combiner' e = trace ("skipping " ++ exp_con e) Nothing
+
+function_identifier :: Exp -> Maybe Exp
+function_identifier v@(Var _) = Just v
+function_identifier (App exp1 _) = function_identifier exp1
+function_identifier (Appt exp _) = function_identifier exp
+function_identifier (Lam _ exp) = function_identifier exp
+function_identifier (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map function_identifier (exp:(map alt_exp alts)) 
+function_identifier (Cast exp _) = function_identifier exp
+function_identifier (Note _ exp) = function_identifier exp
+function_identifier _ = Nothing
+
+ 
+find_new_piece exp recursive_call combiner = find_new_piece' exp
+  where find_new_piece' (App exp1 exp2)
+          | exp2 == recursive_call = find_arg_in exp1
+          | call_contained_in exp1 = Just exp2
+        find_new_piece' (Lam _ exp) = find_new_piece' exp
+        find_new_piece' (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map find_new_piece' (exp:(map alt_exp alts)) 
+        find_new_piece' (Cast exp _) = find_new_piece' exp
+        find_new_piece' (Note _ exp) = find_new_piece' exp
+        find_new_piece' _ = Nothing
+
+        find_arg_in (App exp1 exp2)
+          | exp1 == combiner = Just exp2
+          | otherwise        = (find_arg_in exp1) `mplus` (find_arg_in exp2)
+        find_arg_in (Lam _ exp) = find_arg_in exp
+        find_arg_in (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map find_arg_in (exp:(map alt_exp alts)) 
+        find_arg_in (Cast exp _) = find_arg_in exp
+        find_arg_in (Note _ exp) = find_arg_in exp
+        find_arg_in _ = Nothing
+
+        call_contained_in (App exp1 exp2)
+          | exp1 == combiner = True
+          | otherwise        = call_contained_in exp2
+        call_contained_in (Lam _ exp) = call_contained_in exp
+        call_contained_in (Case exp vbind _ alts) = any  (== True) $ map call_contained_in (exp:(map alt_exp alts)) 
+        call_contained_in (Cast exp _) = call_contained_in exp
+        call_contained_in (Note _ exp) = call_contained_in exp
+        call_contained_in _ = False
+ 
+
 
 replace_exp haystack needle sub = replace_exp' haystack
   where
@@ -97,16 +151,21 @@ exp_con (External _ _) = "External"
 
 without_module = snd
 
+same_app (Appt a _) b = a == b
+same_app a (Appt b _) = a == b
+same_app a b          = a == b
+
 instance Eq Exp where
   (Var a) == (Var b) = a == b
   (Dcon a) == (Dcon b) = a == b
   (Lit a) == (Lit b) = a == b
   (App a1 a2) == (App b1 b2) = a1 == b1 && a2 == b2
+  (Appt a1 a2) == (Appt b1 b2) = a1 == b1 && a2 == b2
   (Lam a1 a2) == (Lam b1 b2) = a1 == b1 && a2 == b2
   (Let a1 a2) == (Let b1 b2) = a1 == b1 && a2 == b2
   (Case a1 a2 a3 a4) == (Case b1 b2 b3 b4) = a1 == b1 && a2 == b2 && a3 == b3 && a4 == b4
   (Cast a1 a2) == (Cast b1 b2) = a1 == b1 && a2 == b2
-  _ == _ = False
+  a == b = False
 
 instance Eq Alt where
   (Acon a1 a2 a3 a4) == (Acon b1 b2 b3 b4) = (a1 == b1) && (a2 == b2) && (a3 == b3) && (a4 == b4)
