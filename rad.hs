@@ -22,38 +22,38 @@ mutant_vdefgs = map mutant_vdefg
 mutant_vdefg (Rec vdefs) = map mutant_vdef vdefs
 mutant_vdefg (Nonrec vdef) = [mutant_vdef vdef]
 
-mutant_vdef (Vdef (var, ty, exp)) = (var, mutant_toplevel_exp var exp)
+mutant_vdef (Vdef (var, ty, exp)) = (without_module var, mutant_toplevel_exp var exp)
 
 mutant_toplevel_exp fn exp = input_changes fn exp
 
-input_changes fn (Lam (Vb (var, ty)) exp) = (input_changes' fn var exp):(input_changes fn exp)
-input_changes fn (Cast exp ty) = input_changes fn exp
+input_changes fn (Lam (Vb (var, ty)) exp) = (input_changes_in_arg fn var exp):(input_changes fn exp)
 input_changes fn (Lam (Tb (tvar, kind)) exp) = input_changes fn exp
+input_changes fn (Cast exp ty) = input_changes fn exp
 input_changes fn (Note string exp) = input_changes fn exp
 input_changes fn _ = []
 
 -- todo: recursive cases should account for aliasing of var
-input_changes' fn var (Case (Var (mod, v)) bind ty alts)
-  | var == v = map (input_changes_alt fn mod) alts
-  | otherwise = concat [input_changes' fn var (alt_exp a) | a <- alts]
-input_changes' fn var (Lam bind exp) = input_changes' fn var exp
-input_changes' fn var (App exp1 exp2) = input_changes' fn var exp2
-input_changes' fn var (Let vdefg exp) = input_changes' fn var exp
-input_changes' fn var (Cast exp ty) = input_changes' fn var exp
-input_changes' fn var (Note string exp) = input_changes' fn var exp
-input_changes' fn var _ = []
+input_changes_in_arg fn var (Case (Var (mod, v)) bind ty alts)
+  | var == v = map (input_changes_in_deconstruction fn mod) alts
+  | otherwise = concat [input_changes_in_arg fn var (alt_exp a) | a <- alts]
+input_changes_in_arg fn var (Lam bind exp) = input_changes_in_arg fn var exp
+input_changes_in_arg fn var (App exp1 exp2) = input_changes_in_arg fn var exp2
+input_changes_in_arg fn var (Let vdefg exp) = input_changes_in_arg fn var exp
+input_changes_in_arg fn var (Cast exp ty) = input_changes_in_arg fn var exp
+input_changes_in_arg fn var (Note string exp) = input_changes_in_arg fn var exp
+input_changes_in_arg fn var _ = []
 
-input_changes_alt fn mod (Acon dcon tbinds vbinds exp) = find_recursive_call fn vbindexps exp
-  where vbindexp (var, _) = Var (mod, var)
-        vbindexps = map vbindexp vbinds
+input_changes_in_deconstruction fn mod (Acon dcon tbinds vbinds exp) = let vbindexp (var, _) = Var (mod, var)
+                                                                           vbindexps = map vbindexp vbinds
+                                                                        in do recursive_call <- find_recursive_call fn vbindexps exp
+                                                                              return recursive_call
 
-find_recursive_call fn potential_args exp = ("recursive_call_of", without_module fn, find_recursive_call' exp)
+find_recursive_call fn potential_args exp = find_recursive_call' exp
   where
 
-    find_recursive_call' :: Exp -> Maybe (Exp, Exp)
     find_recursive_call' app@(App exp1 exp2) = let
                                                  find_matching_call (vbind:vbinds)
-                                                          | is_call exp1 fn && is_arg exp2 vbind = Just (vbind, app)
+                                                          | is_call exp1 fn && is_arg exp2 vbind = Just app
                                                           | otherwise                            = find_matching_call vbinds
                                                  find_matching_call [] = Nothing
                                               in case find_matching_call potential_args of
@@ -61,7 +61,7 @@ find_recursive_call fn potential_args exp = ("recursive_call_of", without_module
                                                     Just x  -> Just x
     find_recursive_call' (Lam _ exp) = find_recursive_call' exp
     find_recursive_call' (Let _ exp) = find_recursive_call' exp
-    find_recursive_call' (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map (\x -> trace ("c" ++ show x) $ find_recursive_call' x) (exp:(map alt_exp alts))
+    find_recursive_call' (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map find_recursive_call' (exp:(map alt_exp alts))
     find_recursive_call' (Cast exp _) = find_recursive_call' exp
     find_recursive_call' (Note _ exp) = find_recursive_call' exp
     find_recursive_call' _ = Nothing
