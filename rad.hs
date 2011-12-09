@@ -48,7 +48,8 @@ input_changes_in_deconstruction fn mod (Acon dcon tbinds vbinds exp) = let vbind
                                                                            vbindexps = map vbindexp vbinds
                                                                         in do recursive_call <- find_recursive_call fn vbindexps exp
                                                                               combiner <- find_combiner exp recursive_call
-                                                                              return (recursive_call, combiner)
+                                                                              new_piece <- find_new_piece exp recursive_call combiner
+                                                                              return (recursive_call, combiner, new_piece)
 
 find_recursive_call fn potential_args exp = find_recursive_call' exp
   where
@@ -95,31 +96,34 @@ function_identifier (Note _ exp) = function_identifier exp
 function_identifier _ = Nothing
 
  
-find_new_piece exp recursive_call combiner = find_new_piece' exp
+find_new_piece exp_after_deconstruction recursive_call combiner = find_new_piece' exp_after_deconstruction
   where find_new_piece' (App exp1 exp2)
-          | exp2 == recursive_call = find_arg_in exp1
-          | call_contained_in exp1 = Just exp2
+          | exp2 `same_app` recursive_call = find_arg_in exp1
+          | call_contained_in exp1         = Just exp2
         find_new_piece' (Lam _ exp) = find_new_piece' exp
         find_new_piece' (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map find_new_piece' (exp:(map alt_exp alts)) 
         find_new_piece' (Cast exp _) = find_new_piece' exp
         find_new_piece' (Note _ exp) = find_new_piece' exp
+        find_new_piece' (Appt exp _) = find_new_piece' exp
         find_new_piece' _ = Nothing
 
         find_arg_in (App exp1 exp2)
-          | exp1 == combiner = Just exp2
-          | otherwise        = (find_arg_in exp1) `mplus` (find_arg_in exp2)
+          | exp1 `same_app` combiner = Just exp2
+          | otherwise                = (find_arg_in exp1) `mplus` (find_arg_in exp2)
         find_arg_in (Lam _ exp) = find_arg_in exp
         find_arg_in (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map find_arg_in (exp:(map alt_exp alts)) 
+        find_arg_in (Appt exp _) = find_arg_in exp
         find_arg_in (Cast exp _) = find_arg_in exp
         find_arg_in (Note _ exp) = find_arg_in exp
         find_arg_in _ = Nothing
 
         call_contained_in (App exp1 exp2)
-          | exp1 == combiner = True
-          | otherwise        = call_contained_in exp2
+          | exp1 `same_app` combiner = True
+          | otherwise                = call_contained_in exp2
         call_contained_in (Lam _ exp) = call_contained_in exp
         call_contained_in (Case exp vbind _ alts) = any  (== True) $ map call_contained_in (exp:(map alt_exp alts)) 
         call_contained_in (Cast exp _) = call_contained_in exp
+        call_contained_in (Appt exp _) = call_contained_in exp
         call_contained_in (Note _ exp) = call_contained_in exp
         call_contained_in _ = False
  
@@ -131,6 +135,7 @@ replace_exp haystack needle sub = replace_exp' haystack
       | needle == exp = sub
       | otherwise     = deep_replace_exp exp
     deep_replace_exp (App exp1 exp2) = App (replace_exp' exp1) (replace_exp' exp2)
+    deep_replace_exp (Appt exp ty) = Appt (replace_exp' exp) ty
     deep_replace_exp (Lam bind exp)  = Lam bind (replace_exp' exp)
     deep_replace_exp (Let vdefg exp) = Let vdefg (replace_exp' exp)
     deep_replace_exp (Case exp vbind ty alts) = Case (replace_exp' exp) vbind ty (map (alt_map_exp replace_exp') alts)
