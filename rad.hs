@@ -53,7 +53,6 @@ input_changes_in_deconstruction fn mod (Acon dcon tbinds vbinds exp) = let vbind
 
 find_recursive_call fn potential_args exp = find_recursive_call' exp
   where
-
     find_recursive_call' app@(App exp1 exp2) = let
                                                  find_matching_call (vbind:vbinds)
                                                           | is_call exp1 fn && is_arg exp2 vbind = Just app
@@ -76,7 +75,7 @@ find_recursive_call fn potential_args exp = find_recursive_call' exp
  
 find_combiner exp_after_deconstruction recursive_call = find_combiner' exp_after_deconstruction
   where find_combiner' a@(App exp1 exp2)
-          | exp2 `same_app` recursive_call = function_identifier exp1
+          | exp2 `same_app` recursive_call = first_arg_to_first_app exp1
           | otherwise                      = find_combiner' exp2 `mplus` find_combiner' exp1
         find_combiner' (Appt exp _) = find_combiner' exp
         find_combiner' (Lam _ exp) = find_combiner' exp
@@ -85,15 +84,14 @@ find_combiner exp_after_deconstruction recursive_call = find_combiner' exp_after
         find_combiner' (Note _ exp) = find_combiner' exp
         find_combiner' e = trace ("skipping " ++ exp_con e) Nothing
 
-function_identifier :: Exp -> Maybe Exp
-function_identifier v@(Var _) = Just v
-function_identifier (App exp1 _) = function_identifier exp1
-function_identifier (Appt exp _) = function_identifier exp
-function_identifier (Lam _ exp) = function_identifier exp
-function_identifier (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map function_identifier (exp:(map alt_exp alts)) 
-function_identifier (Cast exp _) = function_identifier exp
-function_identifier (Note _ exp) = function_identifier exp
-function_identifier _ = Nothing
+first_arg_to_first_app :: Exp -> Maybe Exp
+first_arg_to_first_app (App exp1 _) = Just exp1
+first_arg_to_first_app (Appt exp _) = first_arg_to_first_app exp
+first_arg_to_first_app (Lam _ exp) = first_arg_to_first_app exp
+first_arg_to_first_app (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map first_arg_to_first_app (exp:(map alt_exp alts)) 
+first_arg_to_first_app (Cast exp _) = first_arg_to_first_app exp
+first_arg_to_first_app (Note _ exp) = first_arg_to_first_app exp
+first_arg_to_first_app _ = Nothing
 
  
 find_new_piece exp_after_deconstruction recursive_call combiner = find_new_piece' exp_after_deconstruction
