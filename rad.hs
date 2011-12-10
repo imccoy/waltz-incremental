@@ -7,6 +7,9 @@ import Language.Core.Parser
 import Language.Core.ParseGlue
 import System.Exit
 
+data InputPerspective = BaseCase Exp
+                      | InputChange (Qual Dcon) Exp Exp Exp
+
 coreFileContents = do
   file <- openFile "B.hcr" ReadMode
   contents <- hGetContents file
@@ -16,16 +19,15 @@ coreFileContents = do
                     exitFailure
     (OkP e) -> return e
  
-mutant (Module name tdefs vdefgs) = mutant_vdefgs vdefgs
+mutant (Module name tdefs vdefgs) = foldr (++) [] $ map mutant_vdefg vdefgs
 
-mutant_vdefgs = map mutant_vdefg
+mutant_vdefg vdefg@(Rec vdefs) = (map Rec $ map mutant_vdef vdefs) ++ [vdefg]
+mutant_vdefg vdefg@(Nonrec vdef) = vdefg:(map Nonrec $ mutant_vdef vdef)
 
-mutant_vdefg (Rec vdefs) = map mutant_vdef vdefs
-mutant_vdefg (Nonrec vdef) = [mutant_vdef vdef]
-
-mutant_vdef (Vdef (var, ty, exp)) = (without_module var, mutant_toplevel_exp var exp)
-
-mutant_toplevel_exp fn exp = input_changes fn exp
+mutant_vdef (Vdef (var, ty, exp)) = map new_toplevel_fn (catMaybes $ concat $ input_changes var exp)
+  where
+    new_toplevel_fn changes@(InputChange dcon _ _ _) = Vdef (append_to_name var dcon, ty, new_toplevel_exp changes)
+    new_toplevel_exp (InputChange _ recursive_call combiner new_value) = Lam (Vb $ ("previous_value", ty)) (App (App combiner new_value) (Var (Nothing, "previous_value")))
 
 input_changes fn (Lam (Vb (var, ty)) exp) = (input_changes_in_arg fn var exp):(input_changes fn exp)
 input_changes fn (Lam (Tb (tvar, kind)) exp) = input_changes fn exp
@@ -49,7 +51,7 @@ input_changes_in_deconstruction fn mod (Acon dcon tbinds vbinds exp) = let vbind
                                                                         in do recursive_call <- find_recursive_call fn vbindexps exp
                                                                               combiner <- find_combiner exp recursive_call
                                                                               new_piece <- find_new_piece exp recursive_call combiner
-                                                                              return (recursive_call, combiner, new_piece)
+                                                                              return $ InputChange dcon recursive_call combiner new_piece
 
 find_recursive_call fn potential_args exp = find_recursive_call' exp
   where
@@ -139,6 +141,8 @@ replace_exp haystack needle sub = replace_exp' haystack
     deep_replace_exp (Case exp vbind ty alts) = Case (replace_exp' exp) vbind ty (map (alt_map_exp replace_exp') alts)
     deep_replace_exp (Cast exp ty) = Cast (replace_exp' exp) ty
     deep_replace_exp (Note string exp) = Note string (replace_exp' exp)
+
+append_to_name (mod, name) b = (mod, name ++ (without_module b))
 
 exp_con (Var _) = "Var"
 exp_con (Dcon _) = "Dcon"
