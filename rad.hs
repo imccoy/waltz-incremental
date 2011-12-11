@@ -8,26 +8,26 @@ import Language.Core.ParseGlue
 import System.Exit
 
 data InputPerspective = BaseCase Exp
-                      | InputChange (Qual Dcon) Exp Exp Exp
-
-coreFileContents = do
-  file <- openFile "B.hcr" ReadMode
-  contents <- hGetContents file
-  case parse contents 0 of
-    (FailP e) -> do putStrLn "HORRIBLY WRONG"
-                    putStrLn e
-                    exitFailure
-    (OkP e) -> return e
+                      | InputChange (Qual Dcon) [Vbind] Exp Exp Exp
  
-mutant (Module name tdefs vdefgs) = foldr (++) [] $ map mutant_vdefg vdefgs
+mutant (Module name tdefs vdefgs) = Module name tdefs $ foldr (++) [] $ map mutant_vdefg vdefgs
 
 mutant_vdefg vdefg@(Rec vdefs) = (map Rec $ map mutant_vdef vdefs) ++ [vdefg]
 mutant_vdefg vdefg@(Nonrec vdef) = vdefg:(map Nonrec $ mutant_vdef vdef)
 
 mutant_vdef (Vdef (var, ty, exp)) = map new_toplevel_fn (catMaybes $ concat $ input_changes var exp)
   where
-    new_toplevel_fn changes@(InputChange dcon _ _ _) = Vdef (append_to_name var dcon, ty, new_toplevel_exp changes)
-    new_toplevel_exp (InputChange _ recursive_call combiner new_value) = Lam (Vb $ ("previous_value", ty)) (App (App combiner new_value) (Var (Nothing, "previous_value")))
+    new_toplevel_fn changes@(InputChange dcon vbinds recursive_call combiner new_value) = Vdef (append_to_name var dcon, new_fn_ty, new_toplevel_exp)
+      where
+        previous_value_type = return_type ty
+        new_fn_ty = foldr mkFunTy previous_value_type (previous_value_type:(map snd vbinds))
+        new_fn_body = App (App combiner new_value) (Var (Nothing, "previous_value"))
+        new_fn_with_vbind_args = foldr (\(var, ty) body -> Lam (Vb (var, ty)) body) new_fn_body vbinds
+        new_toplevel_exp = Lam (Vb $ ("previous_value", previous_value_type)) new_fn_with_vbind_args
+
+return_type (Tapp _ ty) = ty
+return_type (Tforall _ ty) = return_type ty
+return_type ty = error $ "unknown type " ++ show ty ++ " for return_type"
 
 input_changes fn (Lam (Vb (var, ty)) exp) = (input_changes_in_arg fn var exp):(input_changes fn exp)
 input_changes fn (Lam (Tb (tvar, kind)) exp) = input_changes fn exp
@@ -51,7 +51,8 @@ input_changes_in_deconstruction fn mod (Acon dcon tbinds vbinds exp) = let vbind
                                                                         in do recursive_call <- find_recursive_call fn vbindexps exp
                                                                               combiner <- find_combiner exp recursive_call
                                                                               new_piece <- find_new_piece exp recursive_call combiner
-                                                                              return $ InputChange dcon recursive_call combiner new_piece
+                                                                              let vbinds_for_new_piece = vbinds_not_used_in_exp vbinds recursive_call
+                                                                              return $ InputChange dcon vbinds_for_new_piece recursive_call combiner new_piece
 
 find_recursive_call fn potential_args exp = find_recursive_call' exp
   where
@@ -95,6 +96,20 @@ first_arg_to_first_app (Cast exp _) = first_arg_to_first_app exp
 first_arg_to_first_app (Note _ exp) = first_arg_to_first_app exp
 first_arg_to_first_app _ = Nothing
 
+vbinds_not_used_in_exp :: [Vbind] -> Exp -> [Vbind]
+vbinds_not_used_in_exp vbinds (Var var) = remove_var_from_vbinds var vbinds
+vbinds_not_used_in_exp vbinds (App exp1 exp2) = vbinds_not_used_in_exp (vbinds_not_used_in_exp vbinds exp1) exp2
+vbinds_not_used_in_exp vbinds (Appt exp _) = vbinds_not_used_in_exp vbinds exp
+vbinds_not_used_in_exp vbinds (Lam _ exp) = vbinds_not_used_in_exp vbinds exp
+vbinds_not_used_in_exp vbinds (Case exp vbind _ alts) = let vbinds_not_used_in_case_exp = vbinds_not_used_in_exp vbinds exp
+                                                         in foldr (flip vbinds_not_used_in_exp) vbinds_not_used_in_case_exp $ map alt_exp alts
+vbinds_not_used_in_exp vbinds (Cast exp _) = vbinds_not_used_in_exp vbinds exp
+vbinds_not_used_in_exp vbinds (Note _ exp) = vbinds_not_used_in_exp vbinds exp
+
+remove_var_from_vbinds var' ((vbind@(var, ty)):vbinds)
+  | var == (without_module var') = remove_var_from_vbinds var' vbinds
+  | otherwise                    = vbind:(remove_var_from_vbinds var' vbinds)
+remove_var_from_vbinds var' [] = []
  
 find_new_piece exp_after_deconstruction recursive_call combiner = find_new_piece' exp_after_deconstruction
   where find_new_piece' (App exp1 exp2)
@@ -209,7 +224,23 @@ alt_map_exp f (Acon a b c exp) = (Acon a b c (f exp))
 alt_map_exp f (Alit a exp) = (Alit a (f exp))
 alt_map_exp f (Adefault exp) = (Adefault (f exp))
 
+coreFileContents = do
+  file <- openFile "B.hcr" ReadMode
+  contents <- hGetContents file
+  case parse contents 0 of
+    (FailP e) -> do putStrLn "HORRIBLY WRONG"
+                    putStrLn e
+                    exitFailure
+    (OkP e) -> return e
+
+writeFileContents core =  do
+  file <- openFile "Bprime.hcr" WriteMode
+  hPutStr file $ show core
+  hClose file
+
 main = do
   core <- coreFileContents
-  putStrLn $ show $ mutant core
+  let mutant_core = mutant core
+  putStrLn $ show $ mutant_core
+  writeFileContents mutant_core
   return ()

@@ -1,5 +1,6 @@
 default: B.hcr rad
 	./rad
+	ghc -c Bprime.hcr
 
 B.hcr: B.hs
 	ghc -fext-core -c B.hs
