@@ -1,6 +1,15 @@
-default: B.hcr rad
+default: Bprime.hs B.hcr rad hcr2hs
+	ghc -c Bprime.hs
+
+Bprime.hs: hcr2hs Bprime.hcr
+	./hcr2hs
+	cat Bprime.hs
+
+hcr2hs: hcr2hs.hs
+	ghc hcr2hs.hs
+
+Bprime.hcr: rad B.hcr
 	./rad
-	ghc -c Bprime.hcr
 
 B.hcr: B.hs
 	ghc -fext-core -c B.hs
