@@ -24,6 +24,7 @@ coreFileContents = do
 writeFileContents hs =  do
   file <- openFile "Bprime.hs" WriteMode
   hPutStr file $ prettyPrint hs
+  hPutStr file "\n"
   hClose file
 
 nowhere = Hs.SrcLoc "nowhere" 0 0
@@ -36,7 +37,7 @@ transformed_vdefgs vdefgs = concat $ map transformed_vdefg vdefgs
 
 transformed_vdef (Core.Vdef ((_, name), ty, exp)) = Hs.HsFunBind $ [Hs.HsMatch nowhere (Hs.HsIdent $ pzdecode name) [] (Hs.HsUnGuardedRhs $ transformed_exp exp) []]
 
--- Let Vdefg Exp	 
+-- Let Vdefg Exp
 -- Note String Exp	 
 -- External String Ty
 transformed_exp (Core.Var name) = Hs.HsVar $ simplify $ transformed_name name

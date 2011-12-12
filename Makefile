@@ -1,15 +1,15 @@
 default: Bprime.hs B.hcr rad hcr2hs
-	ghc -c Bprime.hs
+	ghc -o Bprime Bprime.hs Bprime.main.hs
+	./Bprime
 
 Bprime.hs: hcr2hs Bprime.hcr
-	./hcr2hs
-	cat Bprime.hs
+	./hcr2hs # hcr2hs is hardcoded to read Bprime.hcr and produce Bprime.hs
 
 hcr2hs: hcr2hs.hs Zcode.hs
 	ghc --make hcr2hs.hs
 
 Bprime.hcr: rad B.hcr
-	./rad
+	./rad # rad is hardcoded to read B.hcr and produce Bprime.hcr
 
 B.hcr: B.hs
 	ghc -fext-core -c B.hs
