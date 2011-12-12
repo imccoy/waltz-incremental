@@ -6,15 +6,15 @@ import Language.Core.Core
 import Language.Core.Parser
 import Language.Core.ParseGlue
 import System.Exit
+import Zcode
 
 data InputPerspective = BaseCase Exp
                       | InputChange (Qual Dcon) [Vbind] Exp Exp Exp
  
 mutant (Module name tdefs vdefgs) = Module name tdefs vdefgs'
-  where 
+  where
     input_changes_in_vdefs = map input_changes $ flattenBinds vdefgs
     vdefgs' = vdefgs ++ (map Nonrec $ foldr (++) [] $ map new_toplevel_fns input_changes_in_vdefs)
-
 
 input_changes vdef@(Vdef (var, ty, exp)) = (vdef, catMaybes $ concat $ input_changes_in_bind var exp)
 
@@ -160,7 +160,7 @@ replace_exp haystack needle sub = replace_exp' haystack
     deep_replace_exp (Cast exp ty) = Cast (replace_exp' exp) ty
     deep_replace_exp (Note string exp) = Note string (replace_exp' exp)
 
-append_to_name (mod, name) b = (mod, name ++ (without_module b))
+append_to_name (mod, name) b = (mod, name ++ (zencode $ without_module b))
 
 exp_con (Var _) = "Var"
 exp_con (Dcon _) = "Dcon"
