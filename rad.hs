@@ -10,30 +10,33 @@ import System.Exit
 data InputPerspective = BaseCase Exp
                       | InputChange (Qual Dcon) [Vbind] Exp Exp Exp
  
-mutant (Module name tdefs vdefgs) = Module name tdefs $ foldr (++) [] $ map mutant_vdefg vdefgs
+mutant (Module name tdefs vdefgs) = Module name tdefs vdefgs'
+  where 
+    input_changes_in_vdefs = map input_changes $ flattenBinds vdefgs
+    vdefgs' = vdefgs ++ (map Nonrec $ foldr (++) [] $ map new_toplevel_fns input_changes_in_vdefs)
 
-mutant_vdefg vdefg@(Rec vdefs) = (map Rec $ map mutant_vdef vdefs) ++ [vdefg]
-mutant_vdefg vdefg@(Nonrec vdef) = vdefg:(map Nonrec $ mutant_vdef vdef)
 
-mutant_vdef (Vdef (var, ty, exp)) = map new_toplevel_fn (catMaybes $ concat $ input_changes var exp)
+input_changes vdef@(Vdef (var, ty, exp)) = (vdef, catMaybes $ concat $ input_changes_in_bind var exp)
+
+new_toplevel_fns (vdef, changes) = map (new_toplevel_fn vdef) changes
+
+new_toplevel_fn (Vdef (var, ty, exp)) (InputChange dcon vbinds recursive_call combiner new_value) = Vdef (append_to_name var dcon, new_fn_ty, new_toplevel_exp)
   where
-    new_toplevel_fn changes@(InputChange dcon vbinds recursive_call combiner new_value) = Vdef (append_to_name var dcon, new_fn_ty, new_toplevel_exp)
-      where
-        previous_value_type = return_type ty
-        new_fn_ty = foldr mkFunTy previous_value_type (previous_value_type:(map snd vbinds))
-        new_fn_body = App (App combiner new_value) (Var (Nothing, "previous_value"))
-        new_fn_with_vbind_args = foldr (\(var, ty) body -> Lam (Vb (var, ty)) body) new_fn_body vbinds
-        new_toplevel_exp = Lam (Vb $ ("previous_value", previous_value_type)) new_fn_with_vbind_args
+    previous_value_type = return_type ty
+    new_fn_ty = foldr mkFunTy previous_value_type (previous_value_type:(map snd vbinds))
+    new_fn_body = App (App combiner new_value) (Var (Nothing, "previous_value"))
+    new_fn_with_vbind_args = foldr (\(var, ty) body -> Lam (Vb (var, ty)) body) new_fn_body vbinds
+    new_toplevel_exp = Lam (Vb $ ("previous_value", previous_value_type)) new_fn_with_vbind_args
 
 return_type (Tapp _ ty) = ty
 return_type (Tforall _ ty) = return_type ty
 return_type ty = error $ "unknown type " ++ show ty ++ " for return_type"
 
-input_changes fn (Lam (Vb (var, ty)) exp) = (input_changes_in_arg fn var exp):(input_changes fn exp)
-input_changes fn (Lam (Tb (tvar, kind)) exp) = input_changes fn exp
-input_changes fn (Cast exp ty) = input_changes fn exp
-input_changes fn (Note string exp) = input_changes fn exp
-input_changes fn _ = []
+input_changes_in_bind fn (Lam (Vb (var, ty)) exp) = (input_changes_in_arg fn var exp):(input_changes_in_bind fn exp)
+input_changes_in_bind fn (Lam (Tb (tvar, kind)) exp) = input_changes_in_bind fn exp
+input_changes_in_bind fn (Cast exp ty) = input_changes_in_bind fn exp
+input_changes_in_bind fn (Note string exp) = input_changes_in_bind fn exp
+input_changes_in_bind fn _ = []
 
 -- todo: recursive cases should account for aliasing of var
 input_changes_in_arg fn var (Case (Var (mod, v)) bind ty alts)

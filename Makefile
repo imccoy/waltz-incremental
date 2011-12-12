@@ -18,4 +18,4 @@ rad: rad.hs
 	ghc -package extcore rad.hs
 
 clean:
-	rm B.hcr B.hi B.o rad.hi rad.o rad
+	rm B.hcr B.hi B.o rad.hi rad.o rad Bprime.hs Bprime.hcr
