@@ -1,0 +1,33 @@
+There's a little web app in App.hs, in which application state is described
+as a pure function over the events. It should start up and work if you do
+"make web". That's nice and all, but the application state gets recomputed
+from scratch every time the event stream changes. Ideally, we would
+incrementally update applicationState when something is added to the event
+stream. The machinery to do this is under development in rad.hs.
+
+To see it go, type "make". 
+
+Here's how everything fits together:
+
+ B.hs
+   
+   |    ghc compiles the haskell to haskell core
+  \ /
+
+ B.hcr
+
+   |   ./rad reads the core, and adds incrementalised versions of it's
+  \ /  functions
+
+Bprime.hcr
+
+   |    ./hcr2hs produces haskell code from the core with incrementalised
+  \ /   functions
+
+Bprime.hs
+
+   |    ghc compiles to a working program, bringing in Bprime.main.hs to
+  \ /   make a runnable entity
+
+Bprime
+

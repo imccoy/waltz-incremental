@@ -72,7 +72,7 @@ find_recursive_call fn potential_args exp = find_recursive_call' exp
     find_recursive_call' (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map find_recursive_call' (exp:(map alt_exp alts))
     find_recursive_call' (Cast exp _) = find_recursive_call' exp
     find_recursive_call' (Note _ exp) = find_recursive_call' exp
-    find_recursive_call' _ = Nothing
+    find_recursive_call' _ = error $ "Couldn't find recursive call of " ++ show fn
     is_call (Var expvar) fn = (unqual expvar) == (unqual fn)
     is_call (Appt exp _) fn = is_call exp fn
     is_call expr fn = False

@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module B where
+module Main where
 
 import Waltz
 
