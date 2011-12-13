@@ -74,18 +74,19 @@ find_recursive_call fn potential_args exp = find_recursive_call' exp
                                                           | otherwise                            = find_matching_call vbinds
                                                  find_matching_call [] = Nothing
                                               in case find_matching_call potential_args of
-                                                    Nothing -> find_recursive_call' exp2
+                                                    Nothing -> find_recursive_call' exp2 `mplus` find_recursive_call' exp1
                                                     Just x  -> Just x
     find_recursive_call' (Lam _ exp) = find_recursive_call' exp
     find_recursive_call' (Let _ exp) = find_recursive_call' exp
     find_recursive_call' (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map find_recursive_call' (exp:(map alt_exp alts))
     find_recursive_call' (Cast exp _) = find_recursive_call' exp
+    find_recursive_call' (Appt exp _) = find_recursive_call' exp
     find_recursive_call' (Note _ exp) = find_recursive_call' exp
-    find_recursive_call' _ = Nothing -- error $ "Couldn't find recursive call of " ++ show fn
+    find_recursive_call' _ = Nothing
     is_call (Var expvar) fn = (unqual expvar) == (unqual fn)
     is_call (Appt exp _) fn = is_call exp fn
     is_call expr fn = False
-    is_arg exp2 vbind = exp2 == vbind
+    is_arg exp2 vbind = same_app exp2 vbind
  
  
 find_combiner exp_after_deconstruction recursive_call = find_combiner' exp_after_deconstruction
@@ -99,8 +100,12 @@ find_combiner exp_after_deconstruction recursive_call = find_combiner' exp_after
         find_combiner' (Note _ exp) = find_combiner' exp
         find_combiner' e = trace ("skipping " ++ exp_con e) Nothing
 
+clean_exp (Appt exp _) = exp
+clean_exp (Cast exp _) = exp
+clean_exp exp = exp
+
 first_arg_to_first_app :: Exp -> Maybe Exp
-first_arg_to_first_app (App exp1 _) = Just exp1
+first_arg_to_first_app (App exp1 _) = Just $ clean_exp exp1
 first_arg_to_first_app (Appt exp _) = first_arg_to_first_app exp
 first_arg_to_first_app (Lam _ exp) = first_arg_to_first_app exp
 first_arg_to_first_app (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map first_arg_to_first_app (exp:(map alt_exp alts)) 
@@ -127,6 +132,7 @@ find_new_piece exp_after_deconstruction recursive_call combiner = find_new_piece
   where find_new_piece' (App exp1 exp2)
           | exp2 `same_app` recursive_call = find_arg_in exp1
           | call_contained_in exp1         = Just exp2
+          | otherwise                      = find_new_piece' exp1 `mplus` find_new_piece' exp2
         find_new_piece' (Lam _ exp) = find_new_piece' exp
         find_new_piece' (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map find_new_piece' (exp:(map alt_exp alts)) 
         find_new_piece' (Cast exp _) = find_new_piece' exp
@@ -146,13 +152,13 @@ find_new_piece exp_after_deconstruction recursive_call combiner = find_new_piece
 
         call_contained_in (App exp1 exp2)
           | exp1 `same_app` combiner = True
-          | otherwise                = call_contained_in exp2
+          | otherwise                = call_contained_in exp2 || call_contained_in exp1
         call_contained_in (Lam _ exp) = call_contained_in exp
         call_contained_in (Case exp vbind _ alts) = any  (== True) $ map call_contained_in (exp:(map alt_exp alts)) 
         call_contained_in (Cast exp _) = call_contained_in exp
         call_contained_in (Appt exp _) = call_contained_in exp
         call_contained_in (Note _ exp) = call_contained_in exp
-        call_contained_in _ = False
+        call_contained_in x = trace ("saying call " ++ (exp_con combiner) ++ " " ++ (show combiner) ++ " not contained in " ++ (exp_con x) ++ " " ++ (show x)) False
  
 
 
