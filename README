@@ -7,6 +7,10 @@ stream. The machinery to do this is under development in rad.hs.
 
 To see it go, type "make". 
 
+You may want some dependencies:
+  cabal install extcore haskell-src # for the machinery
+  cabal install wai blaze-html      # for the web stuff
+
 Here's how everything fits together:
 
  B.hs

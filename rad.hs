@@ -1,4 +1,6 @@
 import Control.Monad
+import Control.Monad.Error
+import Data.Either
 import Data.Maybe
 import Debug.Trace
 import IO
@@ -13,12 +15,15 @@ data InputPerspective = BaseCase Exp
  
 mutant (Module name tdefs vdefgs) = Module name tdefs vdefgs'
   where
-    input_changes_in_vdefs = map input_changes $ flattenBinds vdefgs
-    vdefgs' = vdefgs ++ (map Nonrec $ foldr (++) [] $ map new_toplevel_fns input_changes_in_vdefs)
+    new_toplevel_fns' = concat $ map new_toplevel_fns $ flattenBinds vdefgs
+    vdefgs' = vdefgs ++ (map Nonrec $ new_toplevel_fns')
 
-input_changes vdef@(Vdef (var, ty, exp)) = (vdef, catMaybes $ concat $ input_changes_in_bind var exp)
+error_exp ty e = Vdef ((Nothing,"error"), (Tvar "error"), Lit $ Literal (Lstring e) (Tvar "string"))
 
-new_toplevel_fns (vdef, changes) = map (new_toplevel_fn vdef) changes
+
+
+new_toplevel_fns vdef@(Vdef (var, ty, exp)) = (map (error_exp ty) $ lefts input_changes') ++ (map (new_toplevel_fn vdef) $ rights input_changes')
+  where input_changes' = input_changes_in_bind var exp
 
 new_toplevel_fn (Vdef (var, ty, exp)) (InputChange dcon vbinds recursive_call combiner new_value) = Vdef (append_to_name var dcon, new_fn_ty, new_toplevel_exp)
   where
@@ -32,7 +37,8 @@ return_type (Tapp _ ty) = ty
 return_type (Tforall _ ty) = return_type ty
 return_type ty = error $ "unknown type " ++ show ty ++ " for return_type"
 
-input_changes_in_bind fn (Lam (Vb (var, ty)) exp) = (input_changes_in_arg fn var exp):(input_changes_in_bind fn exp)
+input_changes_in_bind :: Qual Var -> Exp -> [Either String InputPerspective]
+input_changes_in_bind fn (Lam (Vb (var, ty)) exp) = (input_changes_in_arg fn var exp) ++ (input_changes_in_bind fn exp)
 input_changes_in_bind fn (Lam (Tb (tvar, kind)) exp) = input_changes_in_bind fn exp
 input_changes_in_bind fn (Cast exp ty) = input_changes_in_bind fn exp
 input_changes_in_bind fn (Note string exp) = input_changes_in_bind fn exp
@@ -51,11 +57,14 @@ input_changes_in_arg fn var _ = []
 
 input_changes_in_deconstruction fn mod (Acon dcon tbinds vbinds exp) = let vbindexp (var, _) = Var (mod, var)
                                                                            vbindexps = map vbindexp vbinds
-                                                                        in do recursive_call <- find_recursive_call fn vbindexps exp
-                                                                              combiner <- find_combiner exp recursive_call
-                                                                              new_piece <- find_new_piece exp recursive_call combiner
+                                                                        in do recursive_call <- ((find_recursive_call fn vbindexps exp) `orError` ("Couldn't find recursive call " ++ show fn))
+                                                                              combiner <- ((find_combiner exp recursive_call) `orError` ("Couldn't find combiner of " ++ show recursive_call ++ " in " ++ show fn))
+                                                                              new_piece <- ((find_new_piece exp recursive_call combiner) `orError` ("Couldn't find new piece for " ++ show combiner ++ " and " ++ show recursive_call ++ " in " ++ show fn))
                                                                               let vbinds_for_new_piece = vbinds_not_used_in_exp vbinds recursive_call
                                                                               return $ InputChange dcon vbinds_for_new_piece recursive_call combiner new_piece
+
+(Just a) `orError` _ = return a
+Nothing  `orError` m = throwError m
 
 find_recursive_call fn potential_args exp = find_recursive_call' exp
   where
