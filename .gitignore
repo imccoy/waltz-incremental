@@ -1,6 +1,7 @@
 *.hcr
 *.hi
 *.o
+Bprime.hs
 Bprime
 hcr2hs
 rad
