@@ -13,29 +13,55 @@ import Zcode
 data InputPerspective = BaseCase Exp
                       | InputChange (Qual Dcon) [Vbind] Exp Exp Exp
  
-mutant (Module name tdefs vdefgs) = Module name tdefs vdefgs'
+mutant (Module name tdefs vdefgs) = Module name tdefs' vdefgs'
   where
-    new_toplevel_fns' = concat $ map new_toplevel_fns $ flattenBinds vdefgs
-    vdefgs' = vdefgs ++ (map Nonrec $ new_toplevel_fns')
+    (new_toplevel_tdefs, new_toplevel_fns) = concat_sides $ map new_toplevels $ flattenBinds vdefgs
+    vdefgs' = vdefgs ++ (map Nonrec $ new_toplevel_fns)
+    tdefs' = tdefs ++ new_toplevel_tdefs
 
 error_exp ty e = Vdef ((Nothing,"error"), (Tvar "error"), Lit $ Literal (Lstring e) (Tvar "string"))
 
+concat_sides :: [([a], [b])] -> ([a], [b])
+concat_sides xs = (concat $ map fst xs, concat $ map snd xs)
 
 
-new_toplevel_fns vdef@(Vdef (var, ty, exp)) = (map (error_exp ty) $ lefts input_changes') ++ (map (new_toplevel_fn vdef) $ rights input_changes')
+new_toplevels vdef@(Vdef (var, ty, exp)) = (new_toplevel_tdef vdef $ rights input_changes', (new_toplevel_fn vdef $ rights input_changes'):(map (error_exp ty) $ lefts input_changes'))
   where input_changes' = input_changes_in_bind var exp
 
-new_toplevel_fn (Vdef (var, ty, exp)) (InputChange dcon vbinds recursive_call combiner new_value) = Vdef (append_to_name var dcon, new_fn_ty, new_toplevel_exp)
+new_toplevel_fn (Vdef (var, ty, exp)) input_changes = Vdef (apply_to_name var (\x -> x ++ "_incrementalised"), new_fn_ty, new_toplevel_exp)
   where
     previous_value_type = return_type ty
-    new_fn_ty = foldr mkFunTy previous_value_type (previous_value_type:(map snd vbinds))
-    new_fn_body = App (App combiner new_value) (Var (Nothing, "previous_value"))
-    new_fn_with_vbind_args = foldr (\(var, ty) body -> Lam (Vb (var, ty)) body) new_fn_body vbinds
-    new_toplevel_exp = Lam (Vb $ ("previous_value", previous_value_type)) new_fn_with_vbind_args
+    input_change_type = Tvar $ snd $ input_change_type_name var
+    new_fn_ty = foldr mkFunTy previous_value_type [input_change_type, previous_value_type]
+    alt_for (InputChange dcon vbinds recursive_call combiner new_value) = Acon (input_change_name var $ snd dcon) [] vbinds (App (App combiner new_value) (Var $ unqual "previous_value"))
+    alt_for (BaseCase exp) = Acon (input_change_name var "_base") [] [] exp
+    alts = map alt_for input_changes
+    new_fn_with_vbind_args = Case (Var $ unqual "input_change") ("input_change_alias", input_change_type) previous_value_type alts
+    new_toplevel_exp = Lam (Vb $ ("previous_value", previous_value_type))  $ Lam (Vb $ ("input_change", input_change_type)) new_fn_with_vbind_args
+
+new_toplevel_tdef (Vdef (var, ty, exp)) input_changes = [Data (input_change_type_name var) input_change_free_bind_vars input_change_constructors]
+  where
+    input_change_constructors = catMaybes $ map constructor_for_input_change input_changes
+    input_change_free_bind_vars = concat $ map free_bind_vars_for_input_change input_changes
+    free_bind_vars (Tvar var) bind_vars = free_bind_vars ty ((var, Klifted):bind_vars)
+    free_bind_vars (Tapp ty1 ty2) bind_vars = free_bind_vars ty2 bind_vars
+    free_bind_vars (Tforall bind ty) bind_vars = free_bind_vars ty bind_vars
+    free_bind_vars t bind_vars = bind_vars 
+    free_bind_vars_for_input_change input_change@(InputChange (mod, name) binds _ _ _) = foldr free_bind_vars [] $ map snd binds
+    free_bind_vars_for_input_change (BaseCase _) = []
+    constructor_for_input_change input_change@(InputChange (mod, name) binds exp1 exp2 exp3) = Just $ Constr (input_change_name var name) [] (map snd binds)
+    constructor_for_input_change input_change@(BaseCase _) = Nothing
+
+input_change_type_name var = apply_to_name var (\x -> "InputChange" ++ x)
+input_change_name var name = apply_to_name (input_change_type_name var) (\x -> zencode $ x ++ name)
 
 return_type (Tapp _ ty) = ty
-return_type (Tforall _ ty) = return_type ty
+return_type (Tforall c ty) = Tforall c $ return_type ty
 return_type ty = error $ "unknown type " ++ show ty ++ " for return_type"
+
+arg_typ (Tapp ty _) = ty
+arg_type (Tforall c ty) = Tforall c $ arg_type ty
+arg_type ty = error $ "unknown type " ++ show ty ++ " for arg_type"
 
 input_changes_in_bind :: Qual Var -> Exp -> [Either String InputPerspective]
 input_changes_in_bind fn (Lam (Vb (var, ty)) exp) = (input_changes_in_arg fn var exp) ++ (input_changes_in_bind fn exp)
@@ -55,6 +81,7 @@ input_changes_in_arg fn var (Cast exp ty) = input_changes_in_arg fn var exp
 input_changes_in_arg fn var (Note string exp) = input_changes_in_arg fn var exp
 input_changes_in_arg fn var _ = []
 
+input_changes_in_deconstruction fn mod (Acon dcon tbinds [] exp) = do return $ BaseCase exp
 input_changes_in_deconstruction fn mod (Acon dcon tbinds vbinds exp) = let vbindexp (var, _) = Var (mod, var)
                                                                            vbindexps = map vbindexp vbinds
                                                                         in do recursive_call <- ((find_recursive_call fn vbindexps exp) `orError` ("Couldn't find recursive call " ++ show fn))
@@ -175,7 +202,8 @@ replace_exp haystack needle sub = replace_exp' haystack
     deep_replace_exp (Cast exp ty) = Cast (replace_exp' exp) ty
     deep_replace_exp (Note string exp) = Note string (replace_exp' exp)
 
-append_to_name (mod, name) b = (mod, name ++ (zencode $ without_module b))
+append_to_name n b = apply_to_name n (\x -> x ++ (without_module b))
+apply_to_name (mod, name) f = (mod, f name)
 
 exp_con (Var _) = "Var"
 exp_con (Dcon _) = "Dcon"
@@ -188,6 +216,17 @@ exp_con (Case _ _ _ _) = "Case"
 exp_con (Cast _ _) = "Cast"
 exp_con (Note _ _) = "Note"
 exp_con (External _ _) = "External"
+
+ty_con (Tvar _) = "Tvar"
+ty_con (Tcon _)	= "Tcon"
+ty_con (Tapp _ _) = "Tapp"
+ty_con (Tforall _ _) = "Tforall"
+ty_con (TransCoercion _ _) = "TransCoercion"
+ty_con (SymCoercion _) = "SymCoercion"
+ty_con (UnsafeCoercion _ _) = "UnsafeCoercion"
+ty_con (InstCoercion _ _) = "InstCoercion"
+ty_con (LeftCoercion _) = "LeftCoercion"
+ty_con (RightCoercion _) = "RightCoercion"
 
 without_module = snd
 

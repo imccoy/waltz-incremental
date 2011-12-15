@@ -29,13 +29,20 @@ writeFileContents hs =  do
 
 nowhere = Hs.SrcLoc "nowhere" 0 0
 
-hcr_to_hs (Core.Module (Core.M (Core.P name, ids, id)) tdefs vdefgs) = Hs.HsModule nowhere (Hs.Module id) Nothing [] (transformed_vdefgs vdefgs)
+hcr_to_hs (Core.Module (Core.M (Core.P name, ids, id)) tdefs vdefgs) = Hs.HsModule nowhere (Hs.Module id) Nothing [] $ (map transformed_tdef tdefs) ++ (transformed_vdefgs vdefgs)
 
 transformed_vdefgs vdefgs = concat $ map transformed_vdefg vdefgs
  where transformed_vdefg (Core.Rec vdefs) = map transformed_vdef vdefs
        transformed_vdefg (Core.Nonrec vdef) = [transformed_vdef vdef]
 
 transformed_vdef (Core.Vdef ((_, name), ty, exp)) = Hs.HsFunBind $ [Hs.HsMatch nowhere (Hs.HsIdent $ pzdecode name) [] (Hs.HsUnGuardedRhs $ transformed_exp exp) []]
+
+transformed_tdef (Core.Data tcon tbinds cdefs) = Hs.HsDataDecl nowhere [] (Hs.HsIdent $ snd tcon) (map (Hs.HsIdent . fst) tbinds) (map transformed_cdef cdefs ) []
+  where transformed_cdef (Core.Constr dcon tbinds tys) = Hs.HsConDecl nowhere (Hs.HsIdent $ zdecode $ snd dcon) $ map Hs.HsUnBangedTy $ map transformed_ty tys
+
+transformed_ty (Core.Tvar tvar) = Hs.HsTyVar $ Hs.HsIdent $ tvar
+transformed_ty (Core.Tapp tvar1 tvar2) = Hs.HsTyApp (transformed_ty tvar1) (transformed_ty tvar2)
+transformed_ty (Core.Tcon tcon) = Hs.HsTyCon $ Hs.UnQual $ Hs.HsIdent $ zdecode $ snd tcon
 
 -- Let Vdefg Exp
 -- Note String Exp	 
