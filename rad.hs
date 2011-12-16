@@ -15,18 +15,24 @@ data InputPerspective = BaseCase Exp
  
 mutant (Module name tdefs vdefgs) = Module name tdefs' vdefgs'
   where
-    (new_toplevel_tdefs, new_toplevel_fns) = concat_sides $ map new_toplevels $ flattenBinds vdefgs
-    vdefgs' = vdefgs ++ (map Nonrec $ new_toplevel_fns)
-    tdefs' = tdefs ++ new_toplevel_tdefs
+    vdefs_input_changes = map vdef_input_changes $ flattenBinds vdefgs
+    vdef_input_changes vdef@(Vdef (var, ty, exp)) = (vdef, partitionEithers $ input_changes_in_bind var exp)
+    vdefgs' = vdefgs ++ (map Nonrec $ new_toplevel_fns vdefs_input_changes)
+    tdefs' = tdefs ++ new_toplevel_tdefs vdefs_input_changes
 
-error_exp ty e = Vdef ((Nothing,"error"), (Tvar "error"), Lit $ Literal (Lstring e) (Tvar "string"))
-
-concat_sides :: [([a], [b])] -> ([a], [b])
-concat_sides xs = (concat $ map fst xs, concat $ map snd xs)
+error_exp e = Vdef ((Nothing,"error"), (Tvar "error"), Lit $ Literal (Lstring e) (Tvar "string"))
 
 
-new_toplevels vdef@(Vdef (var, ty, exp)) = (new_toplevel_tdef vdef $ rights input_changes', (new_toplevel_fn vdef $ rights input_changes'):(map (error_exp ty) $ lefts input_changes'))
-  where input_changes' = input_changes_in_bind var exp
+
+incrementalise_fn_reference (Var v) = Var $ apply_to_name v (\x -> x ++ "_incrementalised")
+
+new_toplevel_fn_with_calls (Lam bind exp) = Lam bind (new_toplevel_fn_with_calls exp)
+new_toplevel_fn_with_calls (Appt exp _) = new_toplevel_fn_with_calls exp
+new_toplevel_fn_with_calls var@(Var _) = App (App (incrementalise_fn_reference var) (Var $ unqual "previous_value")) (Var $ unqual "input_change")
+new_toplevel_fn_with_calls exp = error ("Got no satisfication " ++ (exp_con exp) ++ (show exp))
+
+new_toplevel_fns [] = []
+new_toplevel_fns ((vdef, (errors, input_changes)):vdefs_input_changes) = (new_toplevel_fn vdef input_changes):(map error_exp errors) ++ (new_toplevel_fns vdefs_input_changes)
 
 new_toplevel_fn (Vdef (var, ty, exp)) input_changes = Vdef (apply_to_name var (\x -> x ++ "_incrementalised"), new_fn_ty, new_toplevel_exp)
   where
@@ -36,21 +42,28 @@ new_toplevel_fn (Vdef (var, ty, exp)) input_changes = Vdef (apply_to_name var (\
     alt_for (InputChange dcon vbinds recursive_call combiner new_value) = Acon (input_change_name var $ snd dcon) [] vbinds (App (App combiner new_value) (Var $ unqual "previous_value"))
     alt_for (BaseCase exp) = Acon (input_change_name var "_base") [] [] exp
     alts = map alt_for input_changes
-    new_fn_with_vbind_args = Case (Var $ unqual "input_change") ("input_change_alias", input_change_type) previous_value_type alts
+    new_fn_with_vbind_args = case input_changes of
+                               []        -> new_toplevel_fn_with_calls exp
+                               otherwise -> Case (Var $ unqual "input_change") ("input_change_alias", input_change_type) previous_value_type alts
     new_toplevel_exp = Lam (Vb $ ("previous_value", previous_value_type))  $ Lam (Vb $ ("input_change", input_change_type)) new_fn_with_vbind_args
 
-new_toplevel_tdef (Vdef (var, ty, exp)) input_changes = [Data (input_change_type_name var) input_change_free_bind_vars input_change_constructors]
+new_toplevel_tdefs [] = []
+new_toplevel_tdefs ((vdef, (_, [])):vdefs_input_changes) = new_toplevel_tdefs vdefs_input_changes
+new_toplevel_tdefs ((vdef, (_, input_changes)):vdefs_input_changes) = (new_toplevel_tdef vdef input_changes):(new_toplevel_tdefs vdefs_input_changes)
+
+new_toplevel_tdef (Vdef (var, ty, exp)) input_changes = Data (input_change_type_name var) input_change_free_bind_vars input_change_constructors
   where
     input_change_constructors = catMaybes $ map constructor_for_input_change input_changes
     input_change_free_bind_vars = concat $ map free_bind_vars_for_input_change input_changes
-    free_bind_vars (Tvar var) bind_vars = free_bind_vars ty ((var, Klifted):bind_vars)
-    free_bind_vars (Tapp ty1 ty2) bind_vars = free_bind_vars ty2 bind_vars
-    free_bind_vars (Tforall bind ty) bind_vars = free_bind_vars ty bind_vars
-    free_bind_vars t bind_vars = bind_vars 
     free_bind_vars_for_input_change input_change@(InputChange (mod, name) binds _ _ _) = foldr free_bind_vars [] $ map snd binds
     free_bind_vars_for_input_change (BaseCase _) = []
     constructor_for_input_change input_change@(InputChange (mod, name) binds exp1 exp2 exp3) = Just $ Constr (input_change_name var name) [] (map snd binds)
     constructor_for_input_change input_change@(BaseCase _) = Just $ Constr (input_change_name var "_base") [] []
+
+free_bind_vars (Tvar var) bind_vars = (var, Klifted):bind_vars
+free_bind_vars (Tapp ty1 ty2) bind_vars = free_bind_vars ty2 bind_vars
+free_bind_vars (Tforall bind ty) bind_vars = free_bind_vars ty bind_vars
+free_bind_vars _ bind_vars = bind_vars 
 
 input_change_type_name var = apply_to_name var (\x -> "InputChange" ++ x)
 input_change_name var name = apply_to_name (input_change_type_name var) (\x -> zencode $ x ++ name)

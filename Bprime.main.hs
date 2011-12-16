@@ -2,4 +2,4 @@ import B
 
 main = do
   putStrLn $ show $ words_length ["abcdef", "abc"]
-  putStrLn $ show $ words_length1rlpZC (words_length ["abc"]) "abcdef"
+  putStrLn $ show $ words_length_incrementalised (words_length ["abc"]) (InputChangewordszulength1rlqZC "abcdef")
