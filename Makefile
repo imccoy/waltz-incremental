@@ -16,7 +16,7 @@ Bprime.hcr: rad B.hcr
 	./rad # rad is hardcoded to read B.hcr and produce Bprime.hcr
 
 B.hcr: B.hs
-	ghc -fext-core -c B.hs
+	ghc -fext-core -fforce-recomp -c B.hs
 
 rad: rad.hs Zcode.hs
 	ghc --make -package extcore rad.hs

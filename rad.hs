@@ -50,7 +50,7 @@ new_toplevel_tdef (Vdef (var, ty, exp)) input_changes = [Data (input_change_type
     free_bind_vars_for_input_change input_change@(InputChange (mod, name) binds _ _ _) = foldr free_bind_vars [] $ map snd binds
     free_bind_vars_for_input_change (BaseCase _) = []
     constructor_for_input_change input_change@(InputChange (mod, name) binds exp1 exp2 exp3) = Just $ Constr (input_change_name var name) [] (map snd binds)
-    constructor_for_input_change input_change@(BaseCase _) = Nothing
+    constructor_for_input_change input_change@(BaseCase _) = Just $ Constr (input_change_name var "_base") [] []
 
 input_change_type_name var = apply_to_name var (\x -> "InputChange" ++ x)
 input_change_name var name = apply_to_name (input_change_type_name var) (\x -> zencode $ x ++ name)
