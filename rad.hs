@@ -19,20 +19,33 @@ mutant (Module name tdefs vdefgs) = Module name tdefs' vdefgs'
     vdef_input_changes vdef@(Vdef (var, ty, exp)) = (vdef, partitionEithers $ input_changes_in_bind var exp)
     tdefs_from_input_changes = new_toplevel_tdefs vdefs_input_changes
     vdefgs' = vdefgs ++ (map Nonrec $ new_toplevel_fns tdefs_from_input_changes vdefs_input_changes)
-    tdefs' = tdefs ++ tdefs_from_input_changes
+    tdefs' = tdefs ++ tdefs_from_input_changes ++ composition_tdefs vdefs_input_changes tdefs_from_input_changes
 
 error_exp e = Vdef ((Nothing,"error"), (Tvar "error"), Lit $ Literal (Lstring e) (Tvar "string"))
 
 incrementalise_fn_reference (Var v) = Var $ apply_to_name v (\x -> x ++ "_incrementalised")
+
+composition_tdefs vdefs_input_changes tdefs_from_input_changes = map composition_tdef' $ filter (\(_, (_, x)) -> length x == 0) vdefs_input_changes
+  where
+    composition_tdef' (Vdef (var, ty, exp), input_changes) = composition_tdef var (return_type ty) tdefs_from_input_changes exp
+composition_tdef fn return_ty tdefs (Lam bind exp) = composition_tdef fn return_ty tdefs exp
+composition_tdef fn return_ty tdefs (Appt exp _) = composition_tdef fn return_ty tdefs exp
+composition_tdef fn return_ty tdefs var@(Var v) = let (Data _ tbinds cdefs) = find_type_definition tdefs (input_change_type_name v)
+                                                      constructors = map constructor cdefs
+                                                      constructor (Constr n tbinds tys) = Constr (input_change_name fn $ drop (length $ zencode $ snd $ input_change_type_name v) $ snd n) tbinds tys
+                                                   in Data (input_change_type_name fn) tbinds constructors
+composition_tdef fn return_ty tdefs exp = error ("I can't get no " ++ (exp_con exp) ++ (show exp))
+
+
 
 new_toplevel_fn_with_calls fn return_ty tdefs (Lam bind exp) = Lam bind (new_toplevel_fn_with_calls fn return_ty tdefs exp)
 new_toplevel_fn_with_calls fn return_ty tdefs (Appt exp _) = new_toplevel_fn_with_calls fn return_ty tdefs exp
 new_toplevel_fn_with_calls fn return_ty tdefs var@(Var v) = let type_definition = find_type_definition tdefs (input_change_type_name v)
                                                                 type_definition_alts = let (Data _ _ cdefs) = type_definition
                                                                                         in map type_definition_alt cdefs
-                                                                type_definition_alt (Constr n tbinds tys) = Acon (input_change_name fn $ snd n) [] (zip input_change_param_names tys) input_change_apps 
+                                                                type_definition_alt (Constr n tbinds tys) = Acon (input_change_name fn $ drop (length $ zencode $ snd $ input_change_type_name v) $ snd n) [] (zip input_change_param_names tys) input_change_apps 
                                                                   where input_change_param_names = zipWith (\_ x -> ("input_change_param_" ++ (show x))) tys [1..]
-                                                                        input_change_apps = foldr App (Var $ n) $ map (\x -> Var $ unqual x) input_change_param_names
+                                                                        input_change_apps = foldl App (Var $ n) $ map (\x -> Var $ unqual x) input_change_param_names
                                                              in App (App (incrementalise_fn_reference var) (Var $ unqual "previous_value")) (Case (Var $ unqual "input_change") ("input_change_alias", Tvar $ snd $ input_change_type_name fn) return_ty type_definition_alts)
 new_toplevel_fn_with_calls fn return_ty tdefs exp = error ("Got no satisfication " ++ (exp_con exp) ++ (show exp))
 
