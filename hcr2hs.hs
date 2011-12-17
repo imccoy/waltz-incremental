@@ -57,7 +57,7 @@ transformed_exp (Core.App exp1 exp2)
 -- transformed_exp (Core.Appt exp ty) = Hs.HsExpTypeSig nowhere (transformed_exp exp) (transformed_ty ty)
 transformed_exp (Core.Lam (Core.Vb (var, _)) exp) = Hs.HsLambda nowhere [Hs.HsPVar $ Hs.HsIdent var] (transformed_exp exp)
 transformed_exp (Core.Lam (Core.Tb _) exp) = transformed_exp exp
-transformed_exp (Core.Case exp vbind ty alts) = Hs.HsCase (transformed_exp exp) $ map transformed_alt alts
+transformed_exp (Core.Case exp vbind ty alts) = Hs.HsParen $ Hs.HsCase (transformed_exp exp) $ map transformed_alt alts
 transformed_exp (Core.Cast exp ty) = transformed_exp exp
 transformed_exp (Core.Appt exp ty) = transformed_exp exp
 
