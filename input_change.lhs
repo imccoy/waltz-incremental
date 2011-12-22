@@ -1,3 +1,7 @@
+EXPERIMENTAL. PROVISIONAL. NOT READY FOR ACTUAL USE.
+
+FUN AND POSSIBLY MIND-EXPANDING, THOUGH.
+
 Consider:
 
 > length [] = 0
@@ -120,3 +124,118 @@ tree on the right.
 Construct a new tree, with the given tree on the right and the existing
 tree on the left.
 >                        | InputChangeNewTree1 (Tree a)
+
+
+Now, let's move from comp-sci-land into businessy-type-systems land. For
+some reason, we've been asked to build a blogging application. Users (who
+will appear out of the ether with type User) make Posts to Blogs.
+
+> data BlogAppState = BlogAppState [Blog]
+> data Blog = Blog String [BlogEntry]
+> data BlogEntry = BlogEntry User String
+
+At the top level, the input change in BlogAppState is entirely
+characterized by the change in its first argument. This is as per the Leaf
+example above.
+> data InputChangeBlogAppState = InputChangeBlogAppState (InputChange [Blog])
+
+The input change in a blog is either a change in the name, or a change in
+the blogs' entries. Happily, this is like a SnocList.
+> data InputChangeBlog = InputChangeBlog0 (InputChange String)
+>                      | InputChangeBlog1 (InputChange [BlogEntry])
+
+And in its turn, the blog entry can change either in its authorship or its
+body, like nothing more nor less than itself. Or perhaps like the SnocList
+again.
+> data InputChangeBlogEntry = InputChangeBlogEntry0 (InputChange User)
+>                           | InputChangeBlogEntry1 (InputChange String)
+
+
+That's all well and good, but it'd be nice if it was actually useful.
+
+
+THE FOLLOWING CONTENT IS EVEN MORE RIDICULOUSLY PROVISIONAL THAN THE
+PRECEDING
+
+As a prelude, let's see if we can incrementalize some old friends: map and
+filter.
+
+> map f (x:xs) = (f x):(map xs)
+> map _ [] = []
+
+As a sanity-preserving maneuver, we ignore changes in f. That gives us:
+
+The first case is simplest, and actually the most important. When we stick
+the new thing on the front, we return a function that takes an old list,
+applies f to the new thing, and sticks the result on the front.
+> mapIncrementalized f (InputChangeNewList v) = (\prior -> (f v):prior)
+
+Now we start to stretch our luck. If the first element changes, then return
+a function that updates it accordingly. If we're doing a complete
+replacement of the value, it's not too bad.
+
+> mapIncrementalized f (InputChangeLCons0 (Replacement v)) = (\(h:t) -> (f v):t)
+
+But conceivably, we could just be adjusting it. For this we need an
+incrementalized version of the function f.
+> mapIncrementalized f (InputChangeLCons0 c) = (\(h:t) -> (fIncrementalized c h):t)
+
+We can also deal with changes deep in the bowels of the list. Perhaps.
+> mapIncrementalized f (InputChangeLCons1 c) = (\(h:t) -> h:(mapIncrementalized f c t))
+
+
+> filter f (x:xs)
+>   | f x       -> x:(filter f xs)
+>   | otherwise -> filter f xs
+> filter _ [] = []
+
+
+> filterIncrementalized f (InputChangeNewList v)
+>   | f v       -> (\prior -> v:prior)
+>   | otherwise -> id
+
+> filterIncrementalized' f (InputChangeNewList v) =
+>   (\prior -> if f v then v:prior else prior)
+
+Some things just don't work. In order to do the right thing for changes to
+an existing element, we need to know if the old value of (f v) was true or
+not - and in this model, we don't.
+> filterIncrementalized f (InputChangeLCons0 (Replacement v)) = undefined
+> filterIncrementalized f (InputChangeLCons0 c) = undefined
+
+But we can still recurse, if we think that's a good idea.
+> filterIncrementalized f (InputChangeLCons1 c) = (\(h:t) -> h:(filterIncrementalized f c t))
+
+
+
+
+How do blogs and blog entries get created? Somehow, there's a stream of
+events hangin' round:
+
+> data BlogAppEvent = NewBlog String
+>                   | NewBlogEntry String User String 
+>
+> isNewBlogEvent x = case x of (NewBlog _) -> True; otherwise -> False
+> isNewBlogEntryEvent x = case x of (NewBlogEntry _ _ _) -> True; otherwise -> False
+> eventBlogName (NewBlogEntry name _ _) = name
+>
+
+We can define a value of type BlogAppState as a function of a list of
+events:
+
+> blogAppState events = BlogAppState $ blogs events
+>
+> blogs events = map (blog events) $ filter isNewBlogEvent events
+> blog events (NewBlog name) = Blog name (blogEntries events name)
+> blogEntries events name = let
+>     entryEvents = filter isNewBlogEntryEvent events
+>     thisBlogEvents = filter ((==name) . eventBlogName) entryEvents
+>   in map (\NewBlogEntry _ user body -> BlogEntry user body) thisBlogEvents
+
+Syntactically, this is not how I want to work, but semantically it
+definitely is. When we incrementalize it:
+
+> blogAppStateIncrementalized (InputChangeBlogAppState blogsChange) =
+>   (\(BlogAppState blogs) -> BlogAppState $ blogsIncrementalized blogsChange blogs)
+> blogsIncrementalized (InputChangeNewList event) =
+>   

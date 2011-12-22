@@ -1,3 +1,7 @@
+EXPERIMENTAL. PROVISIONAL. NOT READY FOR ACTUAL USE.
+
+FUN AND POSSIBLY MIND-EXPANDING, THOUGH.
+
 There's a little web app in App.hs, in which application state is described
 as a pure function over the events. It should start up and work if you do
 "make web". That's nice and all, but the application state gets recomputed
