@@ -194,9 +194,6 @@ We can also deal with changes deep in the bowels of the list. Perhaps.
 >   | f v       -> (\prior -> v:prior)
 >   | otherwise -> id
 
-> filterIncrementalized' f (InputChangeNewList v) =
->   (\prior -> if f v then v:prior else prior)
-
 Some things just don't work. In order to do the right thing for changes to
 an existing element, we need to know if the old value of (f v) was true or
 not - and in this model, we don't.
@@ -206,6 +203,25 @@ not - and in this model, we don't.
 But we can still recurse, if we think that's a good idea.
 > filterIncrementalized f (InputChangeLCons1 c) = (\(h:t) -> h:(filterIncrementalized f c t))
 
+What if we want to map over the return value of a call to filter? So far,
+an incrementalised function looks like this:
+
+> f :: a -> b
+
+> fIncrementalized :: InputChange a -> (b -> b)
+
+That is, you pass in an InputChange, and you get a function that adapts the
+output accordingly. In order to incrementalize a map over the return value
+of filter without redoing the entire map, though, we need to have an
+incrementalized version of filter that returns an InputChange for map:
+
+> fIncrementalized' :: InputChange a -> InputChange b 
+
+So how does that look for filter?
+
+> filterIncrementalized' f (InputChangeNewList v)
+>   | f v       -> InputChangeNewList v
+>   | otherwise -> InputChangeNone
 
 
 
@@ -233,9 +249,21 @@ events:
 >   in map (\NewBlogEntry _ user body -> BlogEntry user body) thisBlogEvents
 
 Syntactically, this is not how I want to work, but semantically it
-definitely is. When we incrementalize it:
+definitely is.
+
+The first line incrementalizes readily:
 
 > blogAppStateIncrementalized (InputChangeBlogAppState blogsChange) =
 >   (\(BlogAppState blogs) -> BlogAppState $ blogsIncrementalized blogsChange blogs)
+
+The next is a bit more interesting. The previous state is a [Blog]. The
+incrementalization has to achieve two things. First, any new blog events
+have to cause new entries in that list; secondly, any new entry events have
+to filter down and cause the relevant blog values to change.
+
+The first of those is easy to achieve, with a definition like:
 > blogsIncrementalized (InputChangeNewList event) =
+>  \blogs -> (mapIncrementalized blog $ filterIncrementalized' isNewBlogEvent event) blogs
 >   
+
+But that does not, on face value, achieve the second.
