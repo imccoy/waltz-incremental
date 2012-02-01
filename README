@@ -29,8 +29,8 @@ Here's how everything fits together:
 
 Bprime.hcr
 
-   |    ./hcr2hs produces haskell code from the core with incrementalised
-  \ /   functions
+   |    ./hcr2hs produces haskell code from rad's core
+  \ /   
 
 Bprime.hs
 

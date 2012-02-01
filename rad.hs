@@ -36,8 +36,6 @@ composition_tdef fn return_ty tdefs var@(Var v) = let (Data _ tbinds cdefs) = fi
                                                    in Data (input_change_type_name fn) tbinds constructors
 composition_tdef fn return_ty tdefs exp = error ("I can't get no " ++ (exp_con exp) ++ (show exp))
 
-
-
 new_toplevel_fn_with_calls fn return_ty tdefs (Lam bind exp) = Lam bind (new_toplevel_fn_with_calls fn return_ty tdefs exp)
 new_toplevel_fn_with_calls fn return_ty tdefs (Appt exp _) = new_toplevel_fn_with_calls fn return_ty tdefs exp
 new_toplevel_fn_with_calls fn return_ty tdefs var@(Var v) = let type_definition = find_type_definition tdefs (input_change_type_name v)
@@ -46,7 +44,7 @@ new_toplevel_fn_with_calls fn return_ty tdefs var@(Var v) = let type_definition 
                                                                 type_definition_alt (Constr n tbinds tys) = Acon (input_change_name fn $ drop (length $ zencode $ snd $ input_change_type_name v) $ snd n) [] (zip input_change_param_names tys) input_change_apps 
                                                                   where input_change_param_names = zipWith (\_ x -> ("input_change_param_" ++ (show x))) tys [1..]
                                                                         input_change_apps = foldl App (Var $ n) $ map (\x -> Var $ unqual x) input_change_param_names
-                                                             in App (App (incrementalise_fn_reference var) (Var $ unqual "previous_value")) (Case (Var $ unqual "input_change") ("input_change_alias", Tvar $ snd $ input_change_type_name fn) return_ty type_definition_alts)
+                                                             in App (incrementalise_fn_reference var) (Case (Var $ unqual "input_change") ("input_change_alias", Tvar $ snd $ input_change_type_name fn) return_ty type_definition_alts)
 new_toplevel_fn_with_calls fn return_ty tdefs exp = error ("Got no satisfication " ++ (exp_con exp) ++ (show exp))
 
 new_toplevel_fns _ [] = []
@@ -54,16 +52,18 @@ new_toplevel_fns tdefs ((vdef, (errors, input_changes)):vdefs_input_changes) = (
 
 new_toplevel_fn tdefs (Vdef (var, ty, exp)) input_changes = Vdef (apply_to_name var (\x -> x ++ "_incrementalised"), new_fn_ty, new_toplevel_exp)
   where
-    previous_value_type = return_type ty
-    input_change_type = Tvar $ snd $ input_change_type_name var
-    new_fn_ty = foldr mkFunTy previous_value_type [input_change_type, previous_value_type]
-    alt_for (InputChange dcon vbinds recursive_call combiner new_value) = Acon (input_change_name var $ snd dcon) [] vbinds (App (App combiner new_value) (Var $ unqual "previous_value"))
-    alt_for (BaseCase exp) = Acon (input_change_name var "_base") [] [] exp
-    alts = map alt_for input_changes
+    new_toplevel_exp = Lam (Vb $ ("input_change", input_change_type)) new_fn_with_vbind_args
     new_fn_with_vbind_args = case input_changes of
                                []        -> new_toplevel_fn_with_calls (unqual $ without_module var) previous_value_type tdefs exp
                                otherwise -> Case (Var $ unqual "input_change") ("input_change_alias", input_change_type) previous_value_type alts
-    new_toplevel_exp = Lam (Vb $ ("previous_value", previous_value_type))  $ Lam (Vb $ ("input_change", input_change_type)) new_fn_with_vbind_args
+    alt_for (InputChange dcon vbinds recursive_call combiner new_value) = Acon (input_change_name var $ snd dcon) [] vbinds (App (output_change_for_combiner combiner) new_value)
+    alt_for (BaseCase exp) = Acon (input_change_name var "_base") [] [] (App (degenerate_output_change "base") exp)
+    alts = map alt_for input_changes
+    output_change_for_combiner combiner = degenerate_output_change $ show (combiner :: Exp)
+    degenerate_output_change s = (App (Var (Nothing, "OutputChange")) (Lit $ Literal (Lstring $ s) (Tvar "String")))
+    previous_value_type = return_type ty
+    input_change_type = Tvar $ snd $ input_change_type_name var
+    new_fn_ty = mkFunTy (Tcon (Nothing, "OutputChange")) input_change_type
 
 new_toplevel_tdefs [] = []
 new_toplevel_tdefs ((vdef, (_, [])):vdefs_input_changes) = new_toplevel_tdefs vdefs_input_changes
