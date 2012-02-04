@@ -1,8 +1,12 @@
-default: Bprime B.hcr rad hcr2hs
+default: Bprime Bprime-web
 	./Bprime
+	./Bprime-web
 
 Bprime: Bprime.hs Radtime.hs Bprime.main.hs
 	ghc -o Bprime Bprime.hs Bprime.main.hs
+
+Bprime-web: Bprime.hs Radtime.hs Bprime.web.hs
+	ghc -o Bprime-web Bprime.hs Bprime.web.hs
 
 web: Waltz.hs App.hs
 	ghc -o App App.hs
