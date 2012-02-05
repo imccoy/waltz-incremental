@@ -3,6 +3,7 @@
 *.o
 Bprime.hs
 Bprime
+Bprime.web
 hcr2hs
 rad
 App
