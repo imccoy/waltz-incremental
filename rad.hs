@@ -8,313 +8,64 @@ import Language.Core.Core
 import Language.Core.Parser
 import Language.Core.ParseGlue
 import System.Exit
-import Zcode
 
-data InputPerspective = BaseCase Exp
-                      | InputChange (Qual Dcon) [Vbind] Exp Exp Exp
- 
 mutant (Module name tdefs vdefgs) = Module name tdefs' vdefgs'
-  where
-    vdefs_input_changes = map vdef_input_changes $ flattenBinds vdefgs
-    vdef_input_changes vdef@(Vdef (var, ty, exp)) = (vdef, partitionEithers $ input_changes_in_bind var exp)
-    tdefs_from_input_changes = new_toplevel_tdefs vdefs_input_changes
-    vdefgs' = vdefgs ++ (map Nonrec $ new_toplevel_fns tdefs_from_input_changes vdefs_input_changes)
-    tdefs' = tdefs ++ tdefs_from_input_changes ++ composition_tdefs vdefs_input_changes tdefs_from_input_changes
+  where tdefs' = tdefs ++ (mutant_tdefs tdefs)
+        vdefgs' = vdefgs ++ (mutant_vdefgs vdefgs)
 
-error_exp e = Vdef ((Nothing,"error"), (Tvar "error"), Lit $ Literal (Lstring e) (Tvar "string"))
+mutant_tdefs = map mutant_tdef
+mutant_tdef (Data qTcon tbinds cdefs) = Data (incrementalise_name qTcon) (mutant_tbinds tbinds) (mutant_cdefs cdefs)
 
-incrementalise_fn_reference (Var v) = Var $ apply_to_name v (\x -> x ++ "_incrementalised")
+mutant_tbinds = map mutant_tbind
+mutant_tbind (tvar, kind) = (incrementalise_string tvar, kind)
 
-composition_tdefs vdefs_input_changes tdefs_from_input_changes = map composition_tdef' $ filter (\(_, (_, x)) -> length x == 0) vdefs_input_changes
-  where
-    composition_tdef' (Vdef (var, ty, exp), input_changes) = composition_tdef var (return_type ty) tdefs_from_input_changes exp
-composition_tdef fn return_ty tdefs (Lam bind exp) = composition_tdef fn return_ty tdefs exp
-composition_tdef fn return_ty tdefs (Appt exp _) = composition_tdef fn return_ty tdefs exp
-composition_tdef fn return_ty tdefs var@(Var v) = let (Data _ tbinds cdefs) = find_type_definition tdefs (input_change_type_name v)
-                                                      constructors = map constructor cdefs
-                                                      constructor (Constr n tbinds tys) = Constr (input_change_name fn $ drop (length $ zencode $ snd $ input_change_type_name v) $ snd n) tbinds tys
-                                                   in Data (input_change_type_name fn) tbinds constructors
-composition_tdef fn return_ty tdefs exp = error ("I can't get no " ++ (exp_con exp) ++ (show exp))
+mutant_cdefs = map mutant_cdef
+mutant_cdef (Constr dcon tbinds tys) = Constr (incrementalise_name dcon) (mutant_tbinds tbinds) (mutant_tys tys)
 
-new_toplevel_fn_with_calls fn return_ty tdefs (Lam bind exp) = Lam bind (new_toplevel_fn_with_calls fn return_ty tdefs exp)
-new_toplevel_fn_with_calls fn return_ty tdefs (Appt exp _) = new_toplevel_fn_with_calls fn return_ty tdefs exp
-new_toplevel_fn_with_calls fn return_ty tdefs var@(Var v) = let type_definition = find_type_definition tdefs (input_change_type_name v)
-                                                                type_definition_alts = let (Data _ _ cdefs) = type_definition
-                                                                                        in map type_definition_alt cdefs
-                                                                type_definition_alt (Constr n tbinds tys) = Acon (input_change_name fn $ drop (length $ zencode $ snd $ input_change_type_name v) $ snd n) [] (zip input_change_param_names tys) input_change_apps 
-                                                                  where input_change_param_names = zipWith (\_ x -> ("input_change_param_" ++ (show x))) tys [1..]
-                                                                        input_change_apps = foldl App (Var $ n) $ map (\x -> Var $ unqual x) input_change_param_names
-                                                             in App (incrementalise_fn_reference var) (Case (Var $ unqual "input_change") ("input_change_alias", Tvar $ snd $ input_change_type_name fn) return_ty type_definition_alts)
-new_toplevel_fn_with_calls fn return_ty tdefs exp = error ("Got no satisfication " ++ (exp_con exp) ++ (show exp))
+mutant_tys = map mutant_ty
+mutant_ty (Tvar tvar) = Tvar $ incrementalise_string tvar
+mutant_ty (Tcon qTcon) = Tcon $ incrementalise_name qTcon
+mutant_ty (Tapp ty1 ty2) = Tapp (mutant_ty ty1) (mutant_ty ty2)
+mutant_ty (Tforall tbind ty) = Tforall tbind (mutant_ty ty)
+mutant_ty (TransCoercion ty1 ty2) = TransCoercion (mutant_ty ty1) (mutant_ty ty2)
+mutant_ty (SymCoercion ty) = SymCoercion (mutant_ty ty)
+mutant_ty (InstCoercion ty1 ty2) = InstCoercion (mutant_ty ty1) (mutant_ty ty2)
+mutant_ty (LeftCoercion ty) = LeftCoercion (mutant_ty ty)
+mutant_ty (RightCoercion ty) = RightCoercion (mutant_ty ty)
 
-new_toplevel_fns _ [] = []
-new_toplevel_fns tdefs ((vdef, (errors, input_changes)):vdefs_input_changes) = (new_toplevel_fn tdefs vdef input_changes):(map error_exp errors) ++ (new_toplevel_fns tdefs vdefs_input_changes)
+mutant_vdefgs = map mutant_vdefg
+mutant_vdefg (Rec vdefs) = Rec $ map mutant_vdef vdefs
+mutant_vdefg (Nonrec vdef) = Nonrec $ mutant_vdef vdef
 
-new_toplevel_fn tdefs (Vdef (var, ty, exp)) input_changes = Vdef (apply_to_name var (\x -> x ++ "_incrementalised"), new_fn_ty, new_toplevel_exp)
-  where
-    new_toplevel_exp = Lam (Vb $ ("input_change", input_change_type)) new_fn_with_vbind_args
-    new_fn_with_vbind_args = case input_changes of
-                               []        -> new_toplevel_fn_with_calls (unqual $ without_module var) previous_value_type tdefs exp
-                               otherwise -> Case (Var $ unqual "input_change") ("input_change_alias", input_change_type) previous_value_type alts
-    alt_for (InputChange dcon vbinds recursive_call combiner new_value) = Acon (input_change_name var $ snd dcon) [] vbinds (App (output_change_for_combiner combiner) new_value)
-    alt_for (BaseCase exp) = Acon (input_change_name var "_base") [] [] (App (degenerate_output_change "base") exp)
-    alts = map alt_for input_changes
-    output_change_for_combiner combiner = degenerate_output_change $ show (combiner :: Exp)
-    degenerate_output_change s = (App (Var (Nothing, "OutputChange")) (Lit $ Literal (Lstring $ s) (Tvar "String")))
-    previous_value_type = return_type ty
-    input_change_type = Tvar $ snd $ input_change_type_name var
-    new_fn_ty = mkFunTy (Tcon (Nothing, "OutputChange")) input_change_type
+mutant_vdef (Vdef (qVar, ty, exp)) = Vdef (incrementalise_name qVar, mutant_ty ty, mutant_exp exp)
 
-new_toplevel_tdefs [] = []
-new_toplevel_tdefs ((vdef, (_, [])):vdefs_input_changes) = new_toplevel_tdefs vdefs_input_changes
-new_toplevel_tdefs ((vdef, (_, input_changes)):vdefs_input_changes) = (new_toplevel_tdef vdef input_changes):(new_toplevel_tdefs vdefs_input_changes)
+mutant_vbinds = map mutant_vbind
+mutant_vbind (var, ty) = (incrementalise_string var, mutant_ty ty)
+mutant_bind (Vb vbind) = Vb $ mutant_vbind vbind
+mutant_bind (Tb tbind) = Tb $ mutant_tbind tbind
 
-new_toplevel_tdef (Vdef (var, ty, exp)) input_changes = Data (input_change_type_name var) input_change_free_bind_vars input_change_constructors
-  where
-    input_change_constructors = catMaybes $ map constructor_for_input_change input_changes
-    input_change_free_bind_vars = concat $ map free_bind_vars_for_input_change input_changes
-    free_bind_vars_for_input_change input_change@(InputChange (mod, name) binds _ _ _) = foldr free_bind_vars [] $ map snd binds
-    free_bind_vars_for_input_change (BaseCase _) = []
-    constructor_for_input_change input_change@(InputChange (mod, name) binds exp1 exp2 exp3) = Just $ Constr (input_change_name var name) [] (map snd binds)
-    constructor_for_input_change input_change@(BaseCase _) = Just $ Constr (input_change_name var "_base") [] []
+mutant_alts = map mutant_alt
+mutant_alt (Acon qDcon tbinds vbinds exp) = Acon (incrementalise_name qDcon) (mutant_tbinds tbinds) (mutant_vbinds vbinds) (mutant_exp exp)
+mutant_alt (Alit lit exp) = Alit lit $ mutant_exp exp
+mutant_alt (Adefault exp) = Adefault $ mutant_exp exp
 
-find_type_definition tdefs name = head $ filter (tdef_shares_name name) tdefs
-  where tdef_shares_name name (Data name' _ _) = name == name'
-        tdef_shares_name name (Newtype name' _ _ _) = name == name'
+mutant_exp (Var qVar) = Var $ incrementalise_name qVar
+mutant_exp (Dcon qDcon) = Dcon $ incrementalise_name qDcon
+mutant_exp (Lit lit) = Lit lit
+mutant_exp (App exp1 exp2) = App (mutant_exp exp1) (mutant_exp exp2)
+mutant_exp (Appt exp ty) = Appt (mutant_exp exp) (mutant_ty ty)
+mutant_exp (Lam bind exp) = Lam (mutant_bind bind) (mutant_exp exp)
+mutant_exp (Let vdefg exp) = Let (mutant_vdefg vdefg) (mutant_exp exp)
+mutant_exp (Case exp vbind ty alts) = Case (mutant_exp exp) (mutant_vbind vbind) (mutant_ty ty) (mutant_alts alts)
+mutant_exp (Cast exp ty) = Cast (mutant_exp exp) (mutant_ty ty)
+mutant_exp (Note string exp) = Note string $ mutant_exp exp
+mutant_exp (External string ty) = error "mutant_exp don't know externals from infernos"
 
-free_bind_vars (Tvar var) bind_vars = (var, Klifted):bind_vars
-free_bind_vars (Tapp ty1 ty2) bind_vars = free_bind_vars ty2 bind_vars
-free_bind_vars (Tforall bind ty) bind_vars = free_bind_vars ty bind_vars
-free_bind_vars _ bind_vars = bind_vars 
+incrementalise_string s = s ++ "_incrementalised"
+incrementalise_name = apply_to_name incrementalise_string
 
-input_change_type_name var = apply_to_name var (\x -> "InputChange" ++ x)
-input_change_name var name = apply_to_name (input_change_type_name var) (\x -> zencode $ x ++ name)
+apply_to_name f (mod, name) = (mod, f name)
 
-return_type (Tapp _ ty) = ty
-return_type (Tforall c ty) = Tforall c $ return_type ty
-return_type ty = error $ "unknown type " ++ show ty ++ " for return_type"
-
-arg_typ (Tapp ty _) = ty
-arg_type (Tforall c ty) = Tforall c $ arg_type ty
-arg_type ty = error $ "unknown type " ++ show ty ++ " for arg_type"
-
-input_changes_in_bind :: Qual Var -> Exp -> [Either String InputPerspective]
-input_changes_in_bind fn (Lam (Vb (var, ty)) exp) = (input_changes_in_arg fn var exp) ++ (input_changes_in_bind fn exp)
-input_changes_in_bind fn (Lam (Tb (tvar, kind)) exp) = input_changes_in_bind fn exp
-input_changes_in_bind fn (Cast exp ty) = input_changes_in_bind fn exp
-input_changes_in_bind fn (Note string exp) = input_changes_in_bind fn exp
-input_changes_in_bind fn _ = []
-
--- todo: recursive cases should account for aliasing of var
-input_changes_in_arg fn var (Case (Var (mod, v)) bind ty alts)
-  | var == v = map (input_changes_in_deconstruction fn mod) alts
-  | otherwise = concat [input_changes_in_arg fn var (alt_exp a) | a <- alts]
-input_changes_in_arg fn var (Lam bind exp) = input_changes_in_arg fn var exp
-input_changes_in_arg fn var (App exp1 exp2) = input_changes_in_arg fn var exp2
-input_changes_in_arg fn var (Let vdefg exp) = input_changes_in_arg fn var exp
-input_changes_in_arg fn var (Cast exp ty) = input_changes_in_arg fn var exp
-input_changes_in_arg fn var (Note string exp) = input_changes_in_arg fn var exp
-input_changes_in_arg fn var _ = []
-
-input_changes_in_deconstruction fn mod (Acon dcon tbinds [] exp) = do return $ BaseCase exp
-input_changes_in_deconstruction fn mod (Acon dcon tbinds vbinds exp) = let vbindexp (var, _) = Var (mod, var)
-                                                                           vbindexps = map vbindexp vbinds
-                                                                        in do recursive_call <- ((find_recursive_call fn vbindexps exp) `orError` ("Couldn't find recursive call " ++ show fn))
-                                                                              combiner <- ((find_combiner exp recursive_call) `orError` ("Couldn't find combiner of " ++ show recursive_call ++ " in " ++ show fn))
-                                                                              new_piece <- ((find_new_piece exp recursive_call combiner) `orError` ("Couldn't find new piece for " ++ show combiner ++ " and " ++ show recursive_call ++ " in " ++ show fn))
-                                                                              let vbinds_for_new_piece = vbinds_not_used_in_exp vbinds recursive_call
-                                                                              return $ InputChange dcon vbinds_for_new_piece recursive_call combiner new_piece
-
-(Just a) `orError` _ = return a
-Nothing  `orError` m = throwError m
-
-find_recursive_call fn potential_args exp = find_recursive_call' exp
-  where
-    find_recursive_call' app@(App exp1 exp2) = let
-                                                 find_matching_call (vbind:vbinds)
-                                                          | is_call exp1 fn && is_arg exp2 vbind = Just app
-                                                          | otherwise                            = find_matching_call vbinds
-                                                 find_matching_call [] = Nothing
-                                              in case find_matching_call potential_args of
-                                                    Nothing -> find_recursive_call' exp2 `mplus` find_recursive_call' exp1
-                                                    Just x  -> Just x
-    find_recursive_call' (Lam _ exp) = find_recursive_call' exp
-    find_recursive_call' (Let _ exp) = find_recursive_call' exp
-    find_recursive_call' (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map find_recursive_call' (exp:(map alt_exp alts))
-    find_recursive_call' (Cast exp _) = find_recursive_call' exp
-    find_recursive_call' (Appt exp _) = find_recursive_call' exp
-    find_recursive_call' (Note _ exp) = find_recursive_call' exp
-    find_recursive_call' _ = Nothing
-    is_call (Var expvar) fn = (unqual expvar) == (unqual fn)
-    is_call (Appt exp _) fn = is_call exp fn
-    is_call expr fn = False
-    is_arg exp2 vbind = same_app exp2 vbind
- 
- 
-find_combiner exp_after_deconstruction recursive_call = find_combiner' exp_after_deconstruction
-  where find_combiner' a@(App exp1 exp2)
-          | exp2 `same_app` recursive_call = first_arg_to_first_app exp1
-          | otherwise                      = find_combiner' exp2 `mplus` find_combiner' exp1
-        find_combiner' (Appt exp _) = find_combiner' exp
-        find_combiner' (Lam _ exp) = find_combiner' exp
-        find_combiner' (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map find_combiner' (exp:(map alt_exp alts)) 
-        find_combiner' (Cast exp _) = find_combiner' exp
-        find_combiner' (Note _ exp) = find_combiner' exp
-        find_combiner' e = trace ("skipping " ++ exp_con e) Nothing
-
-clean_exp (Appt exp _) = exp
-clean_exp (Cast exp _) = exp
-clean_exp exp = exp
-
-first_arg_to_first_app :: Exp -> Maybe Exp
-first_arg_to_first_app (App exp1 _) = Just $ clean_exp exp1
-first_arg_to_first_app (Appt exp _) = first_arg_to_first_app exp
-first_arg_to_first_app (Lam _ exp) = first_arg_to_first_app exp
-first_arg_to_first_app (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map first_arg_to_first_app (exp:(map alt_exp alts)) 
-first_arg_to_first_app (Cast exp _) = first_arg_to_first_app exp
-first_arg_to_first_app (Note _ exp) = first_arg_to_first_app exp
-first_arg_to_first_app _ = Nothing
-
-vbinds_not_used_in_exp :: [Vbind] -> Exp -> [Vbind]
-vbinds_not_used_in_exp vbinds (Var var) = remove_var_from_vbinds var vbinds
-vbinds_not_used_in_exp vbinds (App exp1 exp2) = vbinds_not_used_in_exp (vbinds_not_used_in_exp vbinds exp1) exp2
-vbinds_not_used_in_exp vbinds (Appt exp _) = vbinds_not_used_in_exp vbinds exp
-vbinds_not_used_in_exp vbinds (Lam _ exp) = vbinds_not_used_in_exp vbinds exp
-vbinds_not_used_in_exp vbinds (Case exp vbind _ alts) = let vbinds_not_used_in_case_exp = vbinds_not_used_in_exp vbinds exp
-                                                         in foldr (flip vbinds_not_used_in_exp) vbinds_not_used_in_case_exp $ map alt_exp alts
-vbinds_not_used_in_exp vbinds (Cast exp _) = vbinds_not_used_in_exp vbinds exp
-vbinds_not_used_in_exp vbinds (Note _ exp) = vbinds_not_used_in_exp vbinds exp
-
-remove_var_from_vbinds var' ((vbind@(var, ty)):vbinds)
-  | var == (without_module var') = remove_var_from_vbinds var' vbinds
-  | otherwise                    = vbind:(remove_var_from_vbinds var' vbinds)
-remove_var_from_vbinds var' [] = []
- 
-find_new_piece exp_after_deconstruction recursive_call combiner = find_new_piece' exp_after_deconstruction
-  where find_new_piece' (App exp1 exp2)
-          | exp2 `same_app` recursive_call = find_arg_in exp1
-          | call_contained_in exp1         = Just exp2
-          | otherwise                      = find_new_piece' exp1 `mplus` find_new_piece' exp2
-        find_new_piece' (Lam _ exp) = find_new_piece' exp
-        find_new_piece' (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map find_new_piece' (exp:(map alt_exp alts)) 
-        find_new_piece' (Cast exp _) = find_new_piece' exp
-        find_new_piece' (Note _ exp) = find_new_piece' exp
-        find_new_piece' (Appt exp _) = find_new_piece' exp
-        find_new_piece' _ = Nothing
-
-        find_arg_in (App exp1 exp2)
-          | exp1 `same_app` combiner = Just exp2
-          | otherwise                = (find_arg_in exp1) `mplus` (find_arg_in exp2)
-        find_arg_in (Lam _ exp) = find_arg_in exp
-        find_arg_in (Case exp vbind _ alts) = listToMaybe $ catMaybes $ map find_arg_in (exp:(map alt_exp alts)) 
-        find_arg_in (Appt exp _) = find_arg_in exp
-        find_arg_in (Cast exp _) = find_arg_in exp
-        find_arg_in (Note _ exp) = find_arg_in exp
-        find_arg_in _ = Nothing
-
-        call_contained_in (App exp1 exp2)
-          | exp1 `same_app` combiner = True
-          | otherwise                = call_contained_in exp2 || call_contained_in exp1
-        call_contained_in (Lam _ exp) = call_contained_in exp
-        call_contained_in (Case exp vbind _ alts) = any  (== True) $ map call_contained_in (exp:(map alt_exp alts)) 
-        call_contained_in (Cast exp _) = call_contained_in exp
-        call_contained_in (Appt exp _) = call_contained_in exp
-        call_contained_in (Note _ exp) = call_contained_in exp
-        call_contained_in x = trace ("saying call " ++ (exp_con combiner) ++ " " ++ (show combiner) ++ " not contained in " ++ (exp_con x) ++ " " ++ (show x)) False
- 
-
-
-replace_exp haystack needle sub = replace_exp' haystack
-  where
-    replace_exp' exp
-      | needle == exp = sub
-      | otherwise     = deep_replace_exp exp
-    deep_replace_exp (App exp1 exp2) = App (replace_exp' exp1) (replace_exp' exp2)
-    deep_replace_exp (Appt exp ty) = Appt (replace_exp' exp) ty
-    deep_replace_exp (Lam bind exp)  = Lam bind (replace_exp' exp)
-    deep_replace_exp (Let vdefg exp) = Let vdefg (replace_exp' exp)
-    deep_replace_exp (Case exp vbind ty alts) = Case (replace_exp' exp) vbind ty (map (alt_map_exp replace_exp') alts)
-    deep_replace_exp (Cast exp ty) = Cast (replace_exp' exp) ty
-    deep_replace_exp (Note string exp) = Note string (replace_exp' exp)
-
-append_to_name n b = apply_to_name n (\x -> x ++ (without_module b))
-apply_to_name (mod, name) f = (mod, f name)
-
-exp_con (Var _) = "Var"
-exp_con (Dcon _) = "Dcon"
-exp_con (Lit _) = "Lit"
-exp_con (App _ _) = "App"
-exp_con (Appt _ _) = "Appt"
-exp_con (Lam _ _) = "Lam"
-exp_con (Let _ _) = "Let"
-exp_con (Case _ _ _ _) = "Case"
-exp_con (Cast _ _) = "Cast"
-exp_con (Note _ _) = "Note"
-exp_con (External _ _) = "External"
-
-ty_con (Tvar _) = "Tvar"
-ty_con (Tcon _)	= "Tcon"
-ty_con (Tapp _ _) = "Tapp"
-ty_con (Tforall _ _) = "Tforall"
-ty_con (TransCoercion _ _) = "TransCoercion"
-ty_con (SymCoercion _) = "SymCoercion"
-ty_con (UnsafeCoercion _ _) = "UnsafeCoercion"
-ty_con (InstCoercion _ _) = "InstCoercion"
-ty_con (LeftCoercion _) = "LeftCoercion"
-ty_con (RightCoercion _) = "RightCoercion"
-
-without_module = snd
-
-same_app (Appt a _) b = a == b
-same_app a (Appt b _) = a == b
-same_app a b          = a == b
-
-instance Eq Exp where
-  (Var a) == (Var b) = a == b
-  (Dcon a) == (Dcon b) = a == b
-  (Lit a) == (Lit b) = a == b
-  (App a1 a2) == (App b1 b2) = a1 == b1 && a2 == b2
-  (Appt a1 a2) == (Appt b1 b2) = a1 == b1 && a2 == b2
-  (Lam a1 a2) == (Lam b1 b2) = a1 == b1 && a2 == b2
-  (Let a1 a2) == (Let b1 b2) = a1 == b1 && a2 == b2
-  (Case a1 a2 a3 a4) == (Case b1 b2 b3 b4) = a1 == b1 && a2 == b2 && a3 == b3 && a4 == b4
-  (Cast a1 a2) == (Cast b1 b2) = a1 == b1 && a2 == b2
-  a == b = False
-
-instance Eq Alt where
-  (Acon a1 a2 a3 a4) == (Acon b1 b2 b3 b4) = (a1 == b1) && (a2 == b2) && (a3 == b3) && (a4 == b4)
-  (Alit a1 a2) == (Alit b1 b2) = (a1 == b1) && (a2 == b2)
-  (Adefault a) == (Adefault b) = (a == b)
-  _ == _ = False
-
-instance Eq Bind where
-  (Vb a) == (Vb b) = (a == b)
-  (Tb a) == (Tb b) = (a == b)
-  _ == _ = False
-
-instance Eq Vdefg where
-  (Rec a) == (Rec b) = (a == b)
-  (Nonrec a) == (Nonrec b) = (a == b)
-  _ == _ = False
-
-instance Eq Kind where
-  Klifted == Klifted = True
-  Kunlifted == Kunlifted = True
-  Kopen == Kopen = True
-  (Karrow a1 a2) == (Karrow b1 b2) = a1 == b1 && a2 == b2
-  (Keq a1 a2) == (Keq b1 b2) = a1 == b1 && a2 == b2
-  _ == _ = False
-
-instance Eq Vdef where
-  (Vdef (a1, a2, a3)) == (Vdef (b1, b2, b3)) = a1 == b1 && a2 == b2 && a3 == b3
-
-alt_exp (Acon _ _ _ exp) = exp
-alt_exp (Alit _ exp) = exp
-alt_exp (Adefault exp) = exp
-
-alt_map_exp f (Acon a b c exp) = (Acon a b c (f exp))
-alt_map_exp f (Alit a exp) = (Alit a (f exp))
-alt_map_exp f (Adefault exp) = (Adefault (f exp))
 
 coreFileContents = do
   file <- openFile "B.hcr" ReadMode
