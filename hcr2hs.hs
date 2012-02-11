@@ -55,7 +55,7 @@ transformed_exp (Core.App exp1 exp2)
   | is_prim_constructor_module exp1    = transformed_exp exp2
   | otherwise                          = Hs.HsParen $ Hs.HsApp (transformed_exp exp1) (transformed_exp exp2) 
 -- transformed_exp (Core.Appt exp ty) = Hs.HsExpTypeSig nowhere (transformed_exp exp) (transformed_ty ty)
-transformed_exp (Core.Lam (Core.Vb (var, _)) exp) = Hs.HsLambda nowhere [Hs.HsPVar $ Hs.HsIdent var] (transformed_exp exp)
+transformed_exp (Core.Lam (Core.Vb (var, _)) exp) = Hs.HsLambda nowhere [Hs.HsPVar $ Hs.HsIdent $ pzdecode var] (transformed_exp exp)
 transformed_exp (Core.Lam (Core.Tb _) exp) = transformed_exp exp
 transformed_exp (Core.Case exp vbind ty alts) = Hs.HsParen $ Hs.HsCase (transformed_exp exp) $ map transformed_alt alts
 transformed_exp (Core.Cast exp ty) = transformed_exp exp
@@ -79,7 +79,7 @@ pzdecode s = let s' = zdecode s
                   False -> "(" ++ s' ++ ")"
 
 simplify (Hs.Qual mod (Hs.HsIdent name))
-  | mod == (Hs.Module "base") || mod == (Hs.Module "ghczmprim") = Hs.UnQual (Hs.HsIdent $ pzdecode name)
+  | mod == (Hs.Module "base") || mod == (Hs.Module "ghczmprim") || mod == (Hs.Module "main") = Hs.UnQual (Hs.HsIdent $ pzdecode name)
   | otherwise                                                   = Hs.Qual mod (Hs.HsIdent $ pzdecode name)
 simplify (Hs.UnQual (Hs.HsIdent name))                          = Hs.UnQual (Hs.HsIdent $ pzdecode name)
 

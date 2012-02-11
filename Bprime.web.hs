@@ -9,9 +9,9 @@ import qualified Text.Blaze.Html5.Attributes as A
 
 
 parse_request query = let word = lastInQueryString query "word"
-                      in InputChangewordszulengthZZC word
+                      in ZC_incrementalised_build_using_1 word
   
-main = runApp parse_request (0 :: Int) words_length_incrementalised page_view 
+main = runApp parse_request (0 :: Int) wordszulength_incrementalised page_view 
 
 page_view state = H.div $ do
   h1 "The Word Monster"
