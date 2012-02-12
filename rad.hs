@@ -18,8 +18,8 @@ mutant (Module name tdefs vdefgs) = Module name tdefs' vdefgs'
 mutant_tdefs = map mutant_tdef
 mutant_tdef (Data qTcon tbinds cdefs) = Data (incrementalise_name qTcon) (tbinds ++ mutant_tbinds tbinds) $ (mutant_cdefs cdefs) ++ (mutant_cdefs_builds qTcon tbinds cdefs)
 
-mutant_cdefs_builds qTcon tbinds cdefs = concat $ map (mutant_cdef_builds qTcon tbinds) cdefs
-mutant_cdef_builds qTcon dataTbinds (Constr qDcon tbinds tys) = builds [] tys 0
+mutant_cdefs_builds qTcon tbinds cdefs = concat $ map (mutant_cdef_builds qTcon) cdefs
+mutant_cdef_builds qTcon (Constr qDcon tbinds tys) = builds [] tys 0
   where builds tys1 (ty:tys2) n 
           | ty_matches ty = [Constr (apply_to_name (++ "_build_using_" ++ (show n)) $ incrementalise_name qDcon) tbinds (tys1 ++ tys2)] ++ (builds (tys1 ++ [ty]) tys2 (n+1))
           | otherwise     = builds (tys1 ++ [ty]) tys2 (n+1)
@@ -57,9 +57,14 @@ mutant_bind (Vb vbind) = Vb $ mutant_vbind vbind
 mutant_bind (Tb tbind) = Tb $ mutant_tbind tbind
 
 mutant_alts ty = concat . (map $ mutant_alt ty)
--- mutant_alt ty (Acon qDcon tbinds vbinds exp) = map mutant_alt_possibility $ mutant_ty_cons ty qDcon
---   where mutant_alt_possibility possibility = [Acon (incrementalise_name qDcon) (mutant_tbinds tbinds) (mutant_vbinds vbinds) (mutant_exp exp)]
-mutant_alt ty (Acon qDcon tbinds vbinds exp) = [Acon (incrementalise_name qDcon) (mutant_tbinds tbinds) (mutant_vbinds vbinds) (mutant_exp exp)]
+mutant_alt ty (Acon qDcon tbinds vbinds exp) = (builds [] vbinds 0) ++ [Acon (incrementalise_name qDcon) (mutant_tbinds tbinds) (mutant_vbinds vbinds) (mutant_exp exp)]
+  where builds vbinds1 (vbind@(_,vbind_ty):vbinds2) n 
+          | ty == vbind_ty = let con = apply_to_name (++ "_build_using_" ++ (show n)) $ incrementalise_name qDcon
+                                 exp = Var $ unqual "wotsit"
+                              in [Acon con (mutant_tbinds tbinds) (vbinds1 ++ vbinds2) exp] ++ (builds (vbinds1 ++ [vbind]) vbinds2 (n+1))
+          | otherwise      = builds (vbinds1 ++ [vbind]) vbinds2 (n+1)
+        builds _ _ _ = []
+
 mutant_alt ty (Alit lit exp) = [Alit lit $ mutant_exp exp]
 mutant_alt ty (Adefault exp) = [Adefault $ mutant_exp exp]
 
@@ -70,7 +75,7 @@ mutant_exp (App exp1 exp2) = App (mutant_exp exp1) (mutant_exp exp2)
 mutant_exp (Appt exp ty) = Appt (mutant_exp exp) (mutant_ty ty)
 mutant_exp (Lam bind exp) = Lam (mutant_bind bind) (mutant_exp exp)
 mutant_exp (Let vdefg exp) = Let (mutant_vdefg vdefg) (mutant_exp exp)
-mutant_exp (Case exp vbind ty alts) = Case (mutant_exp exp) (mutant_vbind vbind) (mutant_ty ty) (mutant_alts ty alts)
+mutant_exp (Case exp vbind ty alts) = Case (mutant_exp exp) (mutant_vbind vbind) (mutant_ty ty) (mutant_alts (snd vbind) alts)
 mutant_exp (Cast exp ty) = Cast (mutant_exp exp) (mutant_ty ty)
 mutant_exp (Note string exp) = Note string $ mutant_exp exp
 mutant_exp (External string ty) = error "mutant_exp don't know externals from infernos"
