@@ -13,12 +13,13 @@ import Network.HTTP.Types
 import Network.Wai.Handler.Warp (run)
 import Text.Blaze.Renderer.Utf8 (renderHtml)
 
-data Char_incrementalised = Char_incrementalised_identity
+data Char_incrementalised = Char_incrementalised_hoist
 
 data Int_incrementalised = Int_incrementalised_add Int
                          | Int_incrementalised_multiply Int
                          | Int_incrementalised_subtract Int
                          | Int_incrementalised_identity
+                         | Int_incrementalised_hoist
 
 zdfNumInt_incrementalised = undefined -- will be passed to zp_incrementalised, which will ignore it
 
@@ -34,6 +35,7 @@ data ZMZN_incrementalised a a_incrementalised = ZC_incrementalised a_incremental
                                               | ZC_incrementalised_build_using_0 [a]
                                               | ZMZN_incrementalised_identity -- that's ZMZN the type of lists, not ZMZN the empty list
                                               | ZMZN_incrementalised_replace [a] -- replace the whole list with the specified value
+                                              | ZMZN_incrementalised_hoist
 
 head_incrementalised (ZC_incrementalised_build_using_1 new_head) = ZMZN_incrementalised_replace new_head
 head_incrementalised _ = error "can't do incrementalised head"
