@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings, ScopedTypeVariables, MultiParamTypeClasses, UndecidableInstances #-}
 module Radtime where
 
 import qualified Data.ByteString.Lazy.Char8 as LB8
@@ -13,6 +13,9 @@ import Network.HTTP.Types
 import Network.Wai.Handler.Warp (run)
 import Text.Blaze.Renderer.Utf8 (renderHtml)
 
+class Incrementalised incrementalised base where 
+  applyInputChange  :: incrementalised -> base -> base
+
 data Char_incrementalised = Char_incrementalised_hoist
 
 data Int_incrementalised = Int_incrementalised_add Int_incrementalised Int_incrementalised
@@ -26,6 +29,12 @@ zdfNumInt_incrementalised = undefined -- will be passed to zp_incrementalised, w
 
 zp_incrementalised _ a b = Int_incrementalised_add a b
 
+instance Incrementalised Int_incrementalised Int where
+  applyInputChange (Int_incrementalised_add a b) m = (applyInputChange a m) + (applyInputChange b m)
+  applyInputChange (Int_incrementalised_replace n) _ = n
+  applyInputChange (Int_incrementalised_identity) m = m
+  applyInputChange c _ = error $ "no applyInputChange for " ++ (show c)
+
 -- data ZMZN a = ZC a (ZMZN a) | []
 data ZMZN_incrementalised a a_incrementalised = ZC_incrementalised
                                                    a_incrementalised 
@@ -36,6 +45,17 @@ data ZMZN_incrementalised a a_incrementalised = ZC_incrementalised
                                               | ZMZN_incrementalised_replace [a] -- replace the whole list with the specified value
                                               | ZMZN_incrementalised_hoist
 
+--instance (Incrementalised b c) => 
+--            Incrementalised (ZMZN_incrementalised a b) ([a]) where
+instance Incrementalised (ZMZN_incrementalised a b) ([a]) where
+  --applyInputChange (ZC_incrementalised hchange tchange) (h:t) = (applyInputChange hchange h):(applyInputChange tchange t)
+  --applyInputChange (ZC_incrementalised hchange tchange) (h:t) = (applyInputChange hchange h):t
+  applyInputChange (ZC_incrementalised hchange tchange) (h:t) = h:(applyInputChange tchange t)
+  applyInputChange (ZC_incrementalised_build_using_1 a) as = a:as
+  applyInputChange (ZC_incrementalised_build_using_0 as) a = a ++ as -- dubious, at best
+  applyInputChange (ZMZN_incrementalised_replace n) _ = n
+  applyInputChange (ZMZN_incrementalised_identity) m = m
+
 head_incrementalised (ZC_incrementalised_build_using_1 new_head) = ZMZN_incrementalised_replace new_head
 head_incrementalised _ = error "can't do incrementalised head"
 --head_incrementalised (ZC_incrementalised_build_using_1 new_head :: ZMZN_incrementalised [a] (ZMZN_incrementalised a a_incrementalised)) = ZMZN_incrementalised_replace new_head :: a_incrementalised
@@ -43,11 +63,6 @@ head_incrementalised _ = error "can't do incrementalised head"
 
 length_incrementalised (ZMZN_incrementalised_replace a) = Int_incrementalised_replace $ length a
 length_incrementalised _ = error "can't do incrementalised length"
-
-applyInputChange (Int_incrementalised_add a b) m = (applyInputChange a m) + (applyInputChange b m)
-applyInputChange (Int_incrementalised_replace n) _ = n
-applyInputChange (Int_incrementalised_identity) m = m
-applyInputChange c _ = error $ "no applyInputChange for " ++ (show c)
 
 app parse_request state incrementalised_state_function representationFunction request = do
   request_body_chunks <- EL.consume
