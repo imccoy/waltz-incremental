@@ -15,22 +15,21 @@ import Text.Blaze.Renderer.Utf8 (renderHtml)
 
 data Char_incrementalised = Char_incrementalised_hoist
 
-data Int_incrementalised = Int_incrementalised_add Int
-                         | Int_incrementalised_multiply Int
-                         | Int_incrementalised_subtract Int
+data Int_incrementalised = Int_incrementalised_add Int_incrementalised Int_incrementalised
+                         | Int_incrementalised_multiply Int_incrementalised Int_incrementalised
                          | Int_incrementalised_identity
+                         | Int_incrementalised_replace Int
                          | Int_incrementalised_hoist
+  deriving (Show)
 
 zdfNumInt_incrementalised = undefined -- will be passed to zp_incrementalised, which will ignore it
 
-zp_incrementalised _ (Int_incrementalised_add n) (Int_incrementalised_add m) = Int_incrementalised_add (m + n)
-zp_incrementalised _ (Int_incrementalised_multiply n) (Int_incrementalised_multiply m) = Int_incrementalised_multiply (m * n)
-zp_incrementalised _ change (Int_incrementalised_identity) = change
-zp_incrementalised _ (Int_incrementalised_identity) change = change
-zp_incrementalised _ _ _ = error "can't do incrementalised +"
+zp_incrementalised _ a b = Int_incrementalised_add a b
 
 -- data ZMZN a = ZC a (ZMZN a) | []
-data ZMZN_incrementalised a a_incrementalised = ZC_incrementalised a_incrementalised (ZMZN_incrementalised a a_incrementalised)
+data ZMZN_incrementalised a a_incrementalised = ZC_incrementalised
+                                                   a_incrementalised 
+                                                   (ZMZN_incrementalised a a_incrementalised)
                                               | ZC_incrementalised_build_using_1 a
                                               | ZC_incrementalised_build_using_0 [a]
                                               | ZMZN_incrementalised_identity -- that's ZMZN the type of lists, not ZMZN the empty list
@@ -42,14 +41,13 @@ head_incrementalised _ = error "can't do incrementalised head"
 --head_incrementalised (ZC_incrementalised_build_using_1 new_head :: ZMZN_incrementalised [a] (ZMZN_incrementalised a a_incrementalised)) = ZMZN_incrementalised_replace new_head :: a_incrementalised
 --head_incrementalised _ = error "can't do incrementalised head"
 
-length_incrementalised (ZC_incrementalised_build_using_1 a) = Int_incrementalised_add 1
+length_incrementalised (ZMZN_incrementalised_replace a) = Int_incrementalised_replace $ length a
 length_incrementalised _ = error "can't do incrementalised length"
 
-data OutputChange a = OutputChange String a
-  deriving (Show)
-
-applyOutputChange (OutputChange "base:GHCziNum.zp @ ghczmprim:GHCziTypes.Int base:GHCziNum.zdfNumInt" n) m = n + m
-applyInputChange (Int_incrementalised_add n) m = n + m
+applyInputChange (Int_incrementalised_add a b) m = (applyInputChange a m) + (applyInputChange b m)
+applyInputChange (Int_incrementalised_replace n) _ = n
+applyInputChange (Int_incrementalised_identity) m = m
+applyInputChange c _ = error $ "no applyInputChange for " ++ (show c)
 
 app parse_request state incrementalised_state_function representationFunction request = do
   request_body_chunks <- EL.consume

@@ -44,7 +44,6 @@ transformed_ty (Core.Tvar tvar) = Hs.HsTyVar $ Hs.HsIdent $ tvar
 transformed_ty (Core.Tapp tvar1 tvar2) = Hs.HsTyApp (transformed_ty tvar1) (transformed_ty tvar2)
 transformed_ty (Core.Tcon tcon) = Hs.HsTyCon $ Hs.UnQual $ Hs.HsIdent $ zdecode $ snd tcon
 
--- Let Vdefg Exp
 -- Note String Exp	 
 -- External String Ty
 transformed_exp (Core.Var name) = Hs.HsVar $ simplify $ transformed_name name
@@ -52,7 +51,7 @@ transformed_exp (Core.Dcon dcon) = Hs.HsCon $ simplify $ transformed_name dcon
 transformed_exp (Core.Lit lit) = Hs.HsLit $ transformed_lit lit
 transformed_exp (Core.App exp1 exp2)
   | is_typeclass_specifier exp2        = transformed_exp exp1
-  | is_prim_constructor_module exp1    = transformed_exp exp2
+  | is_prim_constructor exp1    = transformed_exp exp2
   | otherwise                          = Hs.HsParen $ Hs.HsApp (transformed_exp exp1) (transformed_exp exp2) 
 -- transformed_exp (Core.Appt exp ty) = Hs.HsExpTypeSig nowhere (transformed_exp exp) (transformed_ty ty)
 transformed_exp (Core.Lam (Core.Vb (var, _)) exp) = Hs.HsLambda nowhere [Hs.HsPVar $ Hs.HsIdent $ pzdecode var] (transformed_exp exp)
@@ -60,6 +59,7 @@ transformed_exp (Core.Lam (Core.Tb _) exp) = transformed_exp exp
 transformed_exp (Core.Case exp vbind ty alts) = Hs.HsParen $ Hs.HsCase (transformed_exp exp) $ map transformed_alt alts
 transformed_exp (Core.Cast exp ty) = transformed_exp exp
 transformed_exp (Core.Appt exp ty) = transformed_exp exp
+transformed_exp (Core.Let vdefg exp) = Hs.HsLet (transformed_vdefgs [vdefg]) (transformed_exp exp)
 
 transformed_exp a = Hs.HsLit $ Hs.HsString ("Unknown: " ++ show a)
 
@@ -92,8 +92,8 @@ transformed_lit (Core.Literal (Core.Lrational f) _) = Hs.HsFrac f
 is_typeclass_specifier (Core.Var (_, name)) = take 3 name == "zdf"
 is_typeclass_specifier _ = False
 
-is_prim_constructor_module a@(Core.Dcon (Just (Core.M (Core.P name, ["GHC"], "Types")), _)) = True
-is_prim_constructor_module _                                                                = False
+is_prim_constructor (Core.Dcon (Just (Core.M (Core.P name, ["GHC"], "Types")), n)) = (n == "Izh")
+is_prim_constructor _                                                              = False
 
 mname_name (Core.M ((Core.P name), _, _)) = name
 
