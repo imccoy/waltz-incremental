@@ -2,6 +2,7 @@
 *.hi
 *.o
 Bprime.hs
+Bprime.instances.hs
 Bprime
 Bprime-web
 hcr2hs

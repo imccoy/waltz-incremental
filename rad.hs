@@ -164,12 +164,18 @@ typeclass_instances (Module (M (_, _, name)) tdefs vdefgs) = Hs.HsModule hs_nowh
                                    , Hs.importSpecs = Nothing
                                    }
                    ]
+
 typeclass_instances_tdefs = map typeclass_instances_tdef
 typeclass_instances_tdef (Data qTcon tbinds cdefs) = Hs.HsInstDecl hs_nowhere context (Hs.UnQual$ Hs.HsIdent "Incrementalised") types [decl]
-  where context = [] 
-        types = [Hs.HsTyVar $ Hs.HsIdent $ snd $ incrementalise_name qTcon, Hs.HsTyVar $ Hs.HsIdent $ snd $ qTcon]
+  where 
+        incrementalise_type_con = Hs.HsTyVar $ Hs.HsIdent $ snd $ incrementalise_name qTcon
+        base_type_con = Hs.HsTyVar $ Hs.HsIdent $ snd $ qTcon
+        base_type = foldl Hs.HsTyApp base_type_con (map (\(tvar, kind) -> Hs.HsTyVar $ Hs.HsIdent tvar) tbinds)
+        incrementalise_type = foldl Hs.HsTyApp incrementalise_type_con (map (\(tvar, kind) -> Hs.HsTyVar $ Hs.HsIdent tvar) $ tbinds ++ (mutant_tbinds tbinds))
+        context = zipWith (\(tvar_base, kind_base) (tvar, kind) -> (Hs.UnQual $ Hs.HsIdent "Incrementalised", [Hs.HsTyVar $ Hs.HsIdent tvar, Hs.HsTyVar $ Hs.HsIdent tvar_base])) tbinds (mutant_tbinds tbinds)
+        types = [incrementalise_type, base_type]
         decl = Hs.HsFunBind matches
-        matches = (map (applyInputChangeCdef qTcon) cdefs) ++ (concat $ map applyInputChangeBuild cdefs)
+        matches = (map (applyInputChangeCdef qTcon) cdefs) ++ (concat $ map (applyInputChangeBuild qTcon) cdefs)
 
 applyInputChangeCdef qTcon (Constr qDcon tbinds tys) = Hs.HsMatch hs_nowhere (Hs.HsIdent "applyInputChange") pat (Hs.HsUnGuardedRhs exp) []
   where input_change_pat = Hs.HsPApp (Hs.UnQual $ Hs.HsIdent $ snd $ incrementalise_name qDcon) input_change_pat_args
@@ -186,7 +192,24 @@ applyInputChangeCdef qTcon (Constr qDcon tbinds tys) = Hs.HsMatch hs_nowhere (Hs
                                  (Hs.HsVar $ Hs.UnQual change_n))
                                (Hs.HsVar $ Hs.UnQual base_n)
                            ) input_change_pat_arg_names base_pat_arg_names
-applyInputChangeBuild cdef = []
+applyInputChangeBuild qTcon (Constr qDcon tbinds tys) = builds [] tys 0
+  where builds tys1 (ty:tys2) n 
+          | ty_matches ty = [Hs.HsMatch hs_nowhere (Hs.HsIdent "applyInputChange") pat (Hs.HsUnGuardedRhs exp) []] ++ (builds (tys1 ++ [ty]) tys2 (n+1))
+          | otherwise     = builds (tys1 ++ [ty]) tys2 (n+1)
+                             where input_change_pat_arg_names = take (length tys1 + length tys2) $ 
+                                                                   map (\n -> Hs.HsIdent (n:[])) ['a'..]
+                                   input_change_pat_args = map Hs.HsPVar input_change_pat_arg_names
+                                   input_change_pat = Hs.HsPApp (Hs.UnQual $ Hs.HsIdent $ snd $ apply_to_name (++ "_build_using_" ++ (show n)) $ incrementalise_name qDcon) input_change_pat_args
+                                   pat = [input_change_pat, Hs.HsPVar $ Hs.HsIdent "base"]
+                                   exp = let (before, after) = splitAt (length tys1) $ map (Hs.HsVar . Hs.UnQual) input_change_pat_arg_names
+                                          in foldl Hs.HsApp 
+                                                   (Hs.HsApp (foldl Hs.HsApp (Hs.HsVar $ Hs.UnQual $ Hs.HsIdent $ snd qDcon) before)
+                                                             (Hs.HsVar $ Hs.UnQual $ Hs.HsIdent "base"))
+                                                    after
+        builds _ _ _ = []
+        ty_matches (Tcon t)      = t == qTcon
+        ty_matches (Tapp bind t) = ty_matches bind
+        ty_matches t             = False
 
 hs_nowhere = Hs.SrcLoc "nowhere" 0 0
 
