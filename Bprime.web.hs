@@ -1,17 +1,12 @@
 {-# LANGUAGE OverloadedStrings, MultiParamTypeClasses #-}
 import B
 import Radtime
+import Binstances
 
 import Text.Blaze.Html5 hiding (head, map)
 import Text.Blaze.Html5.Attributes
 import qualified Text.Blaze.Html5 as H
 import qualified Text.Blaze.Html5.Attributes as A
-
-instance Incrementalised AppState_incrementalised AppState where
-  applyInputChange change (AppState wordsLength words mostRecentWord) = AppState (applyInputChange (appStateWordsLength_incrementalised change) wordsLength)
-                                                                                 (applyInputChange (appStateWords_incrementalised change) words)
-                                                                                 (applyInputChange (appStateMostRecentWord_incrementalised change) mostRecentWord)
-
 
 
 parse_request query = let word = lastInQueryString query "word"

@@ -1,6 +1,6 @@
 module B where
 
-data TryList a = EmptyTryList | ConsTryList a (TryList a)
+-- data TryList a = EmptyTryList | ConsTryList a (TryList a)
 
 data AppState = AppState { appStateWordsLength :: Int, appStateWords :: [String], appStateMostRecentWord :: String }
 

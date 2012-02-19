@@ -11,6 +11,9 @@ import Language.Core.ParseGlue
 import System.Exit
 import Zcode
 
+import qualified Language.Haskell.Syntax as Hs
+import qualified Language.Haskell.Pretty as HsPretty
+
 mutant (Module name tdefs vdefgs) = Module name tdefs' vdefgs'
   where tdefs' = tdefs ++ (mutant_tdefs tdefs)
         vdefgs' = vdefgs ++ (mutant_vdefgs vdefgs)
@@ -147,6 +150,45 @@ incrementalise_name = apply_to_name (zencode . incrementalise_string)
 
 apply_to_name f (mod, name) = (mod, f name)
 
+typeclass_instances (Module (M (_, _, name)) tdefs vdefgs) = Hs.HsModule hs_nowhere (Hs.Module $ name ++ "instances") Nothing imports $ typeclass_instances_tdefs tdefs
+  where imports = [Hs.HsImportDecl { Hs.importLoc = hs_nowhere
+                                   , Hs.importModule = Hs.Module name
+                                   , Hs.importQualified = False
+                                   , Hs.importAs = Nothing
+                                   , Hs.importSpecs = Nothing
+                                   },
+                   Hs.HsImportDecl { Hs.importLoc = hs_nowhere
+                                   , Hs.importModule = Hs.Module "Radtime"
+                                   , Hs.importQualified = False
+                                   , Hs.importAs = Nothing
+                                   , Hs.importSpecs = Nothing
+                                   }
+                   ]
+typeclass_instances_tdefs = map typeclass_instances_tdef
+typeclass_instances_tdef (Data qTcon tbinds cdefs) = Hs.HsInstDecl hs_nowhere context (Hs.UnQual$ Hs.HsIdent "Incrementalised") types [decl]
+  where context = [] 
+        types = [Hs.HsTyVar $ Hs.HsIdent $ snd $ incrementalise_name qTcon, Hs.HsTyVar $ Hs.HsIdent $ snd $ qTcon]
+        decl = Hs.HsFunBind matches
+        matches = (map (applyInputChangeCdef qTcon) cdefs) ++ (concat $ map applyInputChangeBuild cdefs)
+
+applyInputChangeCdef qTcon (Constr qDcon tbinds tys) = Hs.HsMatch hs_nowhere (Hs.HsIdent "applyInputChange") pat (Hs.HsUnGuardedRhs exp) []
+  where input_change_pat = Hs.HsPApp (Hs.UnQual $ Hs.HsIdent $ snd $ incrementalise_name qDcon) input_change_pat_args
+        input_change_pat_arg_names = take (length tys) $ map (\n -> Hs.HsIdent (n:"_change")) ['a'..]
+        input_change_pat_args = map Hs.HsPVar input_change_pat_arg_names
+        base_pat = Hs.HsPApp (Hs.UnQual $ Hs.HsIdent $ snd $ qDcon) base_pat_args
+        base_pat_arg_names = take (length tys) $ map (\n -> Hs.HsIdent (n:"_base")) ['a'..]
+        base_pat_args = map Hs.HsPVar base_pat_arg_names
+        pat = [input_change_pat, base_pat]
+        exp = foldl Hs.HsApp (Hs.HsCon $ Hs.UnQual $ Hs.HsIdent $ snd qDcon) exp_args
+        exp_args = zipWith (\change_n base_n -> Hs.HsParen $ Hs.HsApp 
+                               (Hs.HsApp 
+                                 (Hs.HsVar $ Hs.UnQual $ Hs.HsIdent "applyInputChange")
+                                 (Hs.HsVar $ Hs.UnQual change_n))
+                               (Hs.HsVar $ Hs.UnQual base_n)
+                           ) input_change_pat_arg_names base_pat_arg_names
+applyInputChangeBuild cdef = []
+
+hs_nowhere = Hs.SrcLoc "nowhere" 0 0
 
 coreFileContents = do
   file <- openFile "B.hcr" ReadMode
@@ -157,14 +199,17 @@ coreFileContents = do
                     exitFailure
     (OkP e) -> return e
 
-writeFileContents core =  do
-  file <- openFile "Bprime.hcr" WriteMode
-  hPutStr file $ show core
+writeFileContents filename content =  do
+  file <- openFile filename WriteMode
+  hPutStr file $ content
   hClose file
 
 main = do
   core <- coreFileContents
   let mutant_core = mutant core
   putStrLn $ show $ mutant_core
-  writeFileContents mutant_core
+  writeFileContents "Bprime.hcr" $ show mutant_core
+  let typeclass_instances_code = typeclass_instances core
+  putStrLn $ show typeclass_instances_code
+  writeFileContents "Bprime.instances.hs" $ "{-# LANGUAGE MultiParamTypeClasses #-}\n" ++ (HsPretty.prettyPrint typeclass_instances_code)
   return ()

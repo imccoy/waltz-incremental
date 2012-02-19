@@ -17,6 +17,15 @@ class Incrementalised incrementalised base where
   applyInputChange  :: incrementalised -> base -> base
 
 data Char_incrementalised = Char_incrementalised_hoist
+                          | Char_incrementalised_replace Char
+                          | Char_incrementalised_identity
+  deriving Show
+
+instance Incrementalised Char_incrementalised Char where
+  applyInputChange (Char_incrementalised_replace n) _ = n
+  applyInputChange (Char_incrementalised_identity) m = m
+  applyInputChange c _ = error $ "no applyInputChange for " ++ (show c)
+
 
 data Int_incrementalised = Int_incrementalised_add Int_incrementalised Int_incrementalised
                          | Int_incrementalised_multiply Int_incrementalised Int_incrementalised
@@ -45,12 +54,9 @@ data ZMZN_incrementalised a a_incrementalised = ZC_incrementalised
                                               | ZMZN_incrementalised_replace [a] -- replace the whole list with the specified value
                                               | ZMZN_incrementalised_hoist
 
---instance (Incrementalised b c) => 
---            Incrementalised (ZMZN_incrementalised a b) ([a]) where
-instance Incrementalised (ZMZN_incrementalised a b) ([a]) where
-  --applyInputChange (ZC_incrementalised hchange tchange) (h:t) = (applyInputChange hchange h):(applyInputChange tchange t)
-  --applyInputChange (ZC_incrementalised hchange tchange) (h:t) = (applyInputChange hchange h):t
-  applyInputChange (ZC_incrementalised hchange tchange) (h:t) = h:(applyInputChange tchange t)
+instance (Incrementalised elem_incrementalised elem) => 
+            Incrementalised (ZMZN_incrementalised elem elem_incrementalised) ([elem]) where
+  applyInputChange (ZC_incrementalised hchange tchange) (h:t) = (applyInputChange hchange h):(applyInputChange tchange t)
   applyInputChange (ZC_incrementalised_build_using_1 a) as = a:as
   applyInputChange (ZC_incrementalised_build_using_0 as) a = a ++ as -- dubious, at best
   applyInputChange (ZMZN_incrementalised_replace n) _ = n
