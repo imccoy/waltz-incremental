@@ -5,8 +5,14 @@ default: Bprime Bprime-web
 Bprime: Bprime.hs Radtime.hs Bprime.main.hs Bprime.instances.hs
 	ghc -o Bprime Bprime.hs Bprime.main.hs Bprime.instances.hs
 
-Bprime-web: Bprime.hs Radtime.hs Bprime.web.hs
+Bprime-web: Bprime.hs Radtime.hs Bprime.web.hs Bprime.instances.hs
 	ghc -o Bprime-web Bprime.hs Bprime.web.hs Bprime.instances.hs
+
+Bprime.instances.hs: InMemoryApplier
+	./InMemoryApplier # reads Bprime.hs and produces Bprime.instances.hs
+
+InMemoryApplier: InMemoryApplier.hs Utils.hs
+	ghc -o InMemoryApplier InMemoryApplier.hs Utils.hs
 
 web: Waltz.hs App.hs
 	ghc -o App App.hs
@@ -26,7 +32,7 @@ B.hcr: B.hs
 	ghc -fext-core -fforce-recomp -c B.hs
 
 rad: rad.hs Zcode.hs
-	ghc --make -package extcore rad.hs
+	ghc --make -package extcore -o Rad Rad.hs RadMain.hs
 
 clean:
-	rm *.hcr *.hi *.o rad Bprime.hs Bprime.hcr App hcr2hs
+	rm *.hcr *.hi *.o rad Bprime.hs Bprime.hcr App hcr2hs InMemoryApplier Bprime.instances.hs
