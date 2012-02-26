@@ -25,14 +25,14 @@ Bprime.hs: hcr2hs Bprime.hcr
 hcr2hs: hcr2hs.hs Zcode.hs
 	ghc --make hcr2hs.hs
 
-Bprime.hcr: rad B.hcr
-	./rad # rad is hardcoded to read B.hcr and produce Bprime.hcr
+Bprime.hcr: Incrementalizer B.hcr
+	./Incrementalizer # rad is hardcoded to read B.hcr and produce Bprime.hcr
 
 B.hcr: B.hs
 	ghc -fext-core -fforce-recomp -c B.hs
 
-rad: rad.hs Zcode.hs
-	ghc --make -package extcore -o Rad Rad.hs RadMain.hs
+Incrementalizer: Incrementalizer.hs Zcode.hs
+	ghc --make -package extcore -o Incrementalizer Incrementalizer.hs IncrementalizerMain.hs
 
 clean:
-	rm *.hcr *.hi *.o rad Bprime.hs Bprime.hcr App hcr2hs InMemoryApplier Bprime.instances.hs
+	rm *.hcr *.hi *.o Bprime.hs Bprime.hcr Bprime.instances.hs App hcr2hs Incrementalizer InMemoryApplier

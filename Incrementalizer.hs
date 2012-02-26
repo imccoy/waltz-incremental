@@ -1,4 +1,4 @@
-module Rad where
+module Incrementalizer where
 
 import Control.Monad
 import Control.Monad.Error

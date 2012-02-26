@@ -6,7 +6,7 @@ Bprime.instances.hs
 Bprime
 Bprime-web
 hcr2hs
-rad
+Incrementalizer
 App
 InMemoryApplier
 .*.swp

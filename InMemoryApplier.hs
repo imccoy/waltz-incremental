@@ -2,7 +2,7 @@ import Language.Core.Core
 import qualified Language.Haskell.Syntax as Hs
 import qualified Language.Haskell.Pretty as HsPretty
 
-import Rad
+import Incrementalizer
 import Utils
 
 typeclass_instances (Module (M (_, _, name)) tdefs vdefgs) = Hs.HsModule hs_nowhere (Hs.Module $ name ++ "instances") Nothing imports $ typeclass_instances_tdefs tdefs
