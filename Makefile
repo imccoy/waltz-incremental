@@ -8,11 +8,20 @@ Bprime: Bprime.hs Radtime.hs Bprime.main.hs Bprime.instances.hs
 Bprime-web: Bprime.hs Radtime.hs Bprime.web.hs Bprime.instances.hs
 	ghc -o Bprime-web Bprime.hs Bprime.web.hs Bprime.instances.hs
 
+Bprime-web-db: Bprime.hs Radtime.hs Bprime.web.hs Bprime.dbinstances.hs
+	ghc -o Bprime-web Bprime.hs Bprime.web.hs Bprime.dbinstances.hs
+
 Bprime.instances.hs: InMemoryApplier
 	./InMemoryApplier # reads Bprime.hs and produces Bprime.instances.hs
 
 InMemoryApplier: InMemoryApplier.hs Utils.hs
 	ghc -o InMemoryApplier InMemoryApplier.hs Utils.hs
+
+Bprime.dbinstances.hs: DatabaseApplier
+	./DatabaseApplier # reads Bprime.hs and produces Bprime.dbinstances.hs
+
+DatabaseApplier: DatabaseApplier.hs Utils.hs
+	ghc -o DatabaseApplier DatabaseApplier.hs Utils.hs
 
 web: Waltz.hs App.hs
 	ghc -o App App.hs
