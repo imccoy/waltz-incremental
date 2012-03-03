@@ -53,6 +53,7 @@ data ZMZN_incrementalised a a_incrementalised = ZC_incrementalised
                                               | ZMZN_incrementalised_identity -- that's ZMZN the type of lists, not ZMZN the empty list
                                               | ZMZN_incrementalised_replace [a] -- replace the whole list with the specified value
                                               | ZMZN_incrementalised_hoist
+                                              | ZMZN_incrementalised -- empty list constructor
 
 instance (Incrementalised elem_incrementalised elem) => 
             Incrementalised (ZMZN_incrementalised elem elem_incrementalised) ([elem]) where

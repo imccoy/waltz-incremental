@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings, MultiParamTypeClasses #-}
 import B
 import Radtime
+import DbRadtime
 import Binstances
 
 import Text.Blaze.Html5 hiding (head, map)
@@ -12,7 +13,7 @@ import qualified Text.Blaze.Html5.Attributes as A
 parse_request query = let word = lastInQueryString query "word"
                       in ZC_incrementalised_build_using_1 word
   
-main = runApp parse_request (app_state ["hello"]) appzustate_incrementalised page_view 
+main = runAppDb parse_request (app_state ["hello"]) appzustate_incrementalised page_view 
 
 page_view state = H.div $ do
   h1 "The Word Monster"

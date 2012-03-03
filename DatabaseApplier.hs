@@ -22,8 +22,8 @@ typeclass_instances_tdef (Data qTcon tbinds cdefs) = Hs.HsInstDecl hs_nowhere co
         base_type_con = Hs.HsTyVar $ Hs.HsIdent $ snd $ qTcon
         base_type = foldl Hs.HsTyApp base_type_con (map (\(tvar, kind) -> Hs.HsTyVar $ Hs.HsIdent tvar) tbinds)
         incrementalise_type = foldl Hs.HsTyApp incrementalise_type_con (map (\(tvar, kind) -> Hs.HsTyVar $ Hs.HsIdent tvar) $ tbinds ++ (mutant_tbinds tbinds))
-        context = zipWith (\(tvar_base, kind_base) (tvar, kind) -> (Hs.UnQual $ Hs.HsIdent "DbIncrementalised", [Hs.HsTyVar $ Hs.HsIdent tvar, Hs.HsTyVar $ Hs.HsIdent tvar_base])) tbinds (mutant_tbinds tbinds)
-        types = [incrementalise_type, base_type]
+        context = map (\(tvar, kind) -> (Hs.UnQual $ Hs.HsIdent "DbIncrementalised", [Hs.HsTyVar $ Hs.HsIdent tvar])) (mutant_tbinds tbinds)
+        types = [incrementalise_type]
         decl = Hs.HsFunBind matches
         matches = (map (applyDbInputChangeCdef qTcon) cdefs) -- ++ (concat $ map (applyDbInputChangeBuild qTcon) cdefs)
 
