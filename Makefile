@@ -1,6 +1,6 @@
-default: Bprime Bprime-web
+default: Bprime Bprime-web Bprime-web-db
 	./Bprime
-	./Bprime-web
+	echo "try Bprime-web or Bprime-web-db"
 
 Bprime: Bprime.hs Radtime.hs Bprime.main.hs Bprime.instances.hs
 	ghc -o Bprime Bprime.hs Bprime.main.hs Bprime.instances.hs
@@ -9,7 +9,7 @@ Bprime-web: Bprime.hs Radtime.hs Bprime.web.hs Bprime.instances.hs
 	ghc -o Bprime-web Bprime.hs Bprime.web.hs Bprime.instances.hs
 
 Bprime-web-db: Bprime.hs Radtime.hs Bprime.web.hs Bprime.dbinstances.hs
-	ghc -o Bprime-web Bprime.hs Bprime.web.hs Bprime.dbinstances.hs
+	ghc -o Bprime-web Bprime.hs Bprime.dbweb.hs Bprime.dbinstances.hs
 
 Bprime.instances.hs: InMemoryApplier
 	./InMemoryApplier # reads Bprime.hs and produces Bprime.instances.hs

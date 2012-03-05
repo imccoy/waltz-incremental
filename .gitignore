@@ -1,6 +1,7 @@
 *.hcr
 *.hi
 *.o
+db
 Bprime.hs
 Bprime.*instances.hs
 Bprime
