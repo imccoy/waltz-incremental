@@ -1,5 +1,7 @@
 module B where
 
+import Data.Data
+
 data TryList a = EmptyTryList | ConsTryList a (TryList a)
 
 data AppState = AppState { appStateWordsLength :: Int, appStateWords :: [String], appStateMostRecentWord :: String }
