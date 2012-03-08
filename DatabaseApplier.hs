@@ -7,17 +7,8 @@ import qualified Language.Haskell.Pretty as HsPretty
 import Incrementalizer
 import Utils
 
-derivations (Module _ tdefs _) = concat $ List.intersperse "\n" $ concat $ map derivation_tdef tdefs
-derivation_tdef (Data qTcon tbinds _) = [instance_code "Show", typeable_instance_code, instance_code "Data"]
-  where instance_code clazz = "deriving instance (" ++ tvar_instances clazz ++ ") => " ++ clazz ++ " (" ++ (snd qTcon) ++ " " ++ (concat $ List.intersperse " " tvars) ++ ")"
-        typeable_instance_code =  "deriving instance " ++ typeable_name tbinds++ " (" ++ (snd qTcon) ++ ")"
-        typeable_name [] = "Typeable"
-        typeable_name tbinds = "Typeable" ++ (show $ length tbinds)
-        tvars = zipWith (\a b -> [b]) tbinds ['a'..]
-        tvar_instances clazz = concat $ List.intersperse " " $ map (\a -> clazz ++ " " ++ a) tvars
-
 typeclass_instances (Module (M (_, _, name)) tdefs vdefgs) = Hs.HsModule hs_nowhere (Hs.Module $ name ++ "instances") Nothing imports $ (typeclass_instances_tdefs tdefs) ++ (db_strategy tdefs)
-  where imports = [import_decl name, import_decl "Radtime", import_decl "DbRadtime", import_decl "Data.Data"]
+  where imports = [import_decl name, import_decl "Radtime", import_decl "DbRadtime"]
         import_decl name = Hs.HsImportDecl { Hs.importLoc = hs_nowhere
                                            , Hs.importModule = Hs.Module name
                                            , Hs.importQualified = False
@@ -66,16 +57,12 @@ typeclass_instances_tdef (Data qTcon tbinds cdefs) = Hs.HsInstDecl hs_nowhere co
 
 applyDbInputChangeCdef qTcon (Constr qDcon tbinds tys) = Hs.HsMatch hs_nowhere (Hs.HsIdent "applyDbInputChange") pat (Hs.HsUnGuardedRhs exp) []
   where (input_change_pat, input_change_pat_arg_names) = hs_pat_names (incrementalise_name qDcon) "_change" (length tys)
-        pat = [Hs.HsPVar $ Hs.HsIdent "handle", Hs.HsPVar $ Hs.HsIdent "structure", input_change_pat, Hs.HsPVar $ Hs.HsIdent "address"]
+        pat = [input_change_pat, Hs.HsPVar $ Hs.HsIdent "address"]
         exp = Hs.HsDo $ map Hs.HsQualifier (invocations ++ [Hs.HsApp (Hs.HsVar $ Hs.UnQual $ Hs.HsIdent "return") Hs.unit_con])
         invocations = zipWith invocation input_change_pat_arg_names [0..]
         invocation change_n n = Hs.HsParen $ Hs.HsApp 
-                                 (Hs.HsApp
-                                   (Hs.HsApp
-                                     (Hs.HsApp 
-                                       (Hs.HsVar $ Hs.UnQual $ Hs.HsIdent "applyDbInputChange")
-                                       (Hs.HsVar $ Hs.UnQual $ Hs.HsIdent "handle"))
-                                     (Hs.HsVar $ Hs.UnQual $ Hs.HsIdent "structure"))
+                                 (Hs.HsApp 
+                                   (Hs.HsVar $ Hs.UnQual $ Hs.HsIdent "applyDbInputChange")
                                    (Hs.HsVar $ Hs.UnQual change_n))
                                  (new_address qDcon n)
         new_address constructor position = Hs.HsParen $ Hs.HsApp (Hs.HsApp (Hs.HsApp (Hs.HsVar $ Hs.UnQual $ Hs.HsIdent "appendAddress")
@@ -112,5 +99,5 @@ main = do
   core <- coreFileContents
   let typeclass_instances_code = typeclass_instances core
   putStrLn $ show typeclass_instances_code
-  writeFileContents "Bprime.dbinstances.hs" $ "{-# LANGUAGE MultiParamTypeClasses, UndecidableInstances, DeriveDataTypeable, StandaloneDeriving #-}\n" ++ (HsPretty.prettyPrint typeclass_instances_code) ++ "\n" ++ (derivations core)
+  writeFileContents "Bprime.dbinstances.hs" $ "{-# LANGUAGE MultiParamTypeClasses, UndecidableInstances #-}\n" ++ (HsPretty.prettyPrint typeclass_instances_code)
   return ()
