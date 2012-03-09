@@ -9,7 +9,7 @@ Bprime-web: Bprime.hs Radtime.hs Bprime.web.hs Bprime.instances.hs
 	ghc -o Bprime-web Bprime.hs Bprime.web.hs Bprime.instances.hs
 
 Bprime-web-db: Bprime.hs Radtime.hs Bprime.web.hs Bprime.dbinstances.hs
-	ghc -o Bprime-web Bprime.hs Bprime.dbweb.hs Bprime.dbinstances.hs
+	ghc -o Bprime-web Bprime.hs Bprime.dbweb.hs Bprime.dbinstances.hs Bprime.dbinstances-manual.hs
 
 Bprime.instances.hs: InMemoryApplier
 	./InMemoryApplier # reads Bprime.hs and produces Bprime.instances.hs

@@ -3,6 +3,7 @@
 module DbRadtime where
 
 import Control.Monad
+import Data.Data
 import qualified Data.ByteString.Lazy.Char8 as LB8
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString as B
@@ -188,8 +189,10 @@ perform_insert handle table values = let sql = build_insert table values
                                       in do putStrLn sql
                                             execStatement_ handle sql >>= failIfError
 
-build_select a b "" = "SELECT " ++ a ++ " FROM " ++ b
-build_select a b c = (build_select a b "") ++ " WHERE " ++ c
+build_select a b c = build_select_multi [a] b c
+
+build_select_multi a b "" = "SELECT " ++ (concat $ intersperse "," a) ++ " FROM " ++ b
+build_select_multi a b c = (build_select_multi a b "") ++ " WHERE " ++ c
 
 build_update table column value "" = "UPDATE " ++ table ++ " SET " ++ column ++ " = " ++ value
 build_update table column value condition = build_update table value column "" ++ " WHERE " ++ condition
@@ -211,7 +214,41 @@ find_absolute_address' structure (table, field, condition) (DbAddressComponent a
     | strategy == Separate = (name, "", "id = (" ++ (build_select (field ++ "__" ++ (show field_index)) table condition) ++ ")") 
   where (name, strategy, constructors) = lookup_in_structure structure addr_con
 
-app handle structure parse_request state incrementalised_state_function representationFunction request = do
+
+
+class LoadableState a where
+  load_state :: SQLiteHandle -> DbStructure -> Int -> IO a
+
+
+instance (LoadableState a => LoadableState [a]) where
+  load_state handle structure id = do
+    let sql = build_select_multi ["anything__0__id", "anything__0__type", "ZMZN__1__id"] "ZMZN" ("id = " ++ show id)
+    putStrLn sql
+    r <- execStatement handle $ sql
+    let (elem_id, elem_type, tail_id) = case r of
+                                          Left e -> error $ "Couldn't select ZMZN " ++ show id ++ ": " ++ e
+                                          Right [] -> error $ "Couldn't select ZMZN" ++ show id ++ ": was empty"
+                                          Right ((row:_):_) -> (snd $ row !! 0, snd $ row !! 1, snd $ row !! 2)
+                                          Right e -> error $ "Couldn't select ZMZN" ++ show id ++ ": was funky " ++ (show e)
+    tail <- load_state handle structure (read tail_id)
+    elem <- load_state handle structure (read elem_id)
+    return $ elem:tail
+                                                                                         
+
+instance LoadableState Char where 
+  load_state handle structure id = do
+    let sql = build_select "Char" "Char" ("id = " ++ show id)
+    putStrLn sql
+    r <- execStatement handle $ sql
+    let v = case r of
+              Left e -> error $ "Couldn't select Char " ++ show id ++ ": " ++ e
+              Right [] -> error $ "Couldn't select Char" ++ show id ++ ": was empty"
+              Right ((row:_):_) -> snd $ row !! 0
+    return $ read v
+ 
+
+
+app handle structure parse_request incrementalised_state_function representationFunction request = do
   request_body_chunks <- EL.consume
   let request_body_query = parseQuery $ B.concat request_body_chunks
   let maybe_input_change = processRequest parse_request request request_body_query
@@ -219,6 +256,7 @@ app handle structure parse_request state incrementalised_state_function represen
     Nothing             -> return ()
     (Just input_change) -> let output_change = incrementalised_state_function input_change
                             in tryIO $ applyDbInputChange handle structure output_change rootAddress
+  state <- tryIO $ load_state handle structure 1
   let response = responseLBS
               status200
               [("Content-Type", B8.pack "text/html")]
@@ -229,6 +267,6 @@ runAppDb parse_request initial_state db_structure incrementalized_state_function
     putStrLn $ "http://localhost:8080/"
     let db_structure' = default_db_structure ++ db_structure
     handle <- prepareDb db_structure' initial_state
-    run 8080 $ app handle db_structure' parse_request initial_state incrementalized_state_function page_view 
+    run 8080 $ app handle db_structure' parse_request incrementalized_state_function page_view 
 
 

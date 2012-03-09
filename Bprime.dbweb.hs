@@ -3,6 +3,7 @@ import B
 import Radtime
 import DbRadtime
 import Binstances
+import Binstances.Manual
 
 import Text.Blaze.Html5 hiding (head, map)
 import Text.Blaze.Html5.Attributes
