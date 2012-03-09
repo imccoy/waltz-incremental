@@ -41,8 +41,8 @@ type DbStructureRow = (String, DbStrategy, [DbStructureConstructor])
 
 default_db_structure = [("ZMZN", Separate, [("ZC", ["", "ZMZN"]),
                                             ("ZMZN", [])]),
-                        ("Char", Inline, [("Char", ["char"])]),
-                        ("Int", Inline, [("Int", ["int"])])
+                        ("Char", Inline, [("", ["char"])]),
+                        ("Int", Inline, [("", ["int"])])
                        ]
 
 appendAddress :: DbAddress -> String -> Int -> DbAddress
@@ -104,22 +104,19 @@ prepareTable handle structure (name, strategy, cons) = putStrLn sql >> execState
   where sql = ("CREATE TABLE " ++ name ++ " (id INTEGER PRIMARY KEY AUTOINCREMENT, " ++ columns_sql ++ ")")
         columns_sql = concat $ intersperse "," columns_sql'
         columns_sql' = map (\(a, b) -> a ++ " " ++ b) columns
-        columns = concat $ map con_columns cons
-        con_columns (con_name, members) = concat $ zipWith (con_member_columns con_name) members [0..]
+        columns = if length (snd $ head cons) == 1 && elem (head $ head $ snd $ head cons) ['a'..'z'] then [(name, head $ snd $ head cons)] else concat $ map con_columns cons
+        con_columns (con_name, members) = let a = concat $ zipWith (con_member_columns con_name) members [0..] in trace (show a) a
 
         con_member_columns con_name member n
            | member == "" = separate_column "anything" n
-           | elem (head member) ['a'..'z'] = primitive_column con_name member
+           | elem (head member) ['a'..'z'] = [("", member)]
            | member_strategy == Inline = inline_column member_name member_cons n
            | member_strategy == Separate = separate_column member_name n
           where (member_name, member_strategy, member_cons) = lookup_in_structure structure member
         separate_column member_name n = prepend_to_names (member_name ++ "__" ++ (show n)) $ [("type", "text"), ("id", "integer")]
         inline_column member_name member_cons n = prepend_to_names (member_name ++ "__" ++ (show n)) $ concat $ map inline_column_con member_cons
         inline_column_con (con_name, members)
-          | length members == 1 && elem (head $ head members) ['a'..'z'] = primitive_column con_name $ head members
           | otherwise                                                    = prepend_to_names con_name $ con_columns (con_name, members)
-        primitive_column con_name "char" = [(con_name, "text")]
-        primitive_column con_name "int" = [(con_name, "integer")]
 
 lookup_in_structure structure "" = ("anything", Separate, [])
 lookup_in_structure structure s = case find (\(a, _, _) -> a == s) structure of
@@ -127,7 +124,11 @@ lookup_in_structure structure s = case find (\(a, _, _) -> a == s) structure of
                            otherwise -> error ("Couldn't find structure for " ++ s)
 
 prepend_to_names :: String -> [(String, String)] -> [(String, String)]
-prepend_to_names s = map (\(a, b) -> (s ++ "__" ++ a, b))
+prepend_to_names s = map (\(a, b) -> (prepend s a, b))
+  where prepend "" "" = ""
+        prepend a "" = a
+        prepend "" b = b
+        prepend a b = a ++ "__" ++ b
 
 
 setInitialValue' :: SQLiteHandle -> DbStructure -> String -> String -> [IO (Either String [(String, String)])] -> IO (Either String [(String, String)])
@@ -143,7 +144,7 @@ setInitialValue' handle structure type_name con_name actions =
        otherwise -> fmap Right $ reference_insert member_name flattened_columns type_name
   where flattened_column :: (String, Either String [(String, String)]) -> Int -> [(String, String)]
         flattened_column (con_elem, Left value) n = [(con_elem ++ "__" ++ show n, value)]
-        flattened_column (con_elem, Right name_values) n = map (\(name, value) -> (con_elem ++ "__" ++ show n ++ "__" ++ name, value)) name_values
+        flattened_column (con_elem, Right name_values) n = map (\(name, value) -> (con_elem ++ "__" ++ show n ++ (if (elem (head name) ['a'..'z']) then ("__" ++ name) else ""), value)) name_values
 
         reference_insert table columns type_name = do perform_insert handle table columns
                                                       id <- getLastRowID handle
@@ -180,6 +181,7 @@ find_absolute_address structure ((DbAddressComponent rootCon fieldIndex):address
         constructor = snd $ head $ constructors -- should be a lookup based on part of fieldIndex, not currently captured
 
 find_absolute_address' structure (table, field, condition) (DbAddressComponent addr_con field_index)
+    | strategy == Inline && elem (head $ head $ snd $ head $ constructors) ['a'..'z'] = (table, field ++ "__" ++ (show field_index) ++ "__" ++ field, condition)
     | strategy == Inline = (table, field ++ "__" ++ (show field_index), condition)
     | strategy == Separate = (name, "", "id = (" ++ (build_select (field ++ "__" ++ (show field_index)) table condition) ++ ")") 
   where (name, strategy, constructors) = lookup_in_structure structure addr_con
