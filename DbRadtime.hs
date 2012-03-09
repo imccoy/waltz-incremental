@@ -22,6 +22,7 @@ import Debug.Trace
 import Radtime (Char_incrementalised, Int_incrementalised, ZMZN_incrementalised (..), processRequest, applyInputChange)
 
 data DbAddressComponent = DbAddressComponent String Int
+  deriving (Show)
 
 type DbAddress = [DbAddressComponent]
 
@@ -76,12 +77,36 @@ instance DbIncrementalised Int_incrementalised where
 instance DbInitialise Int where
   setInitialValue handle structure n = return $ Right $ [("Int", show n)]
   
-instance (DbIncrementalised elem_incrementalised) => 
+instance (DbIncrementalised elem_incrementalised, DbInitialise elem) => 
             DbIncrementalised (ZMZN_incrementalised elem elem_incrementalised) where
-  applyDbInputChange handle structure (ZMZN_incrementalised) address = error "not implemented"
+  applyDbInputChange handle structure (ZMZN_incrementalised) address = error "not implemented A" 
   applyDbInputChange handle structure (ZC_incrementalised elem_incrementalised list_incrementalised) address = do
     applyDbInputChange handle structure elem_incrementalised (appendAddress address "ZC_incrementalised" 0)
-  applyDbInputChange handle structure change address = error "not implemented"
+
+  applyDbInputChange handle structure (ZC_incrementalised_build_using_1 elem) relative_address = do
+    let address@(table, column, condition) = find_absolute_address structure relative_address
+    r <- execStatement handle $ build_select (column ++ "__id") table condition
+    let old_head_id = case r of
+              Left e -> error $ "Couldn't select " ++ show address ++ ": " ++ e
+              Right ((((column_name,value):_):_):_) -> value
+              Right empty -> error $ "Couldn't select " ++ show address ++ ": was empty"
+    elem_columns <- setInitialValue handle structure elem
+    perform_insert handle "ZMZN" $ [("ZMZN__1__id", old_head_id), ("ZMZN__1__type", "ZMZN")] ++ (either (error "noleft") (prepend_to_names "anything__0") elem_columns)
+    new_head_id <- getLastRowID handle
+    let sql = build_update table (column ++ "__id") (show new_head_id) condition
+    putStrLn sql
+    execStatement_ handle sql >>= failIfError
+
+  applyDbInputChange handle structure (ZMZN_incrementalised_identity) address = return ()
+  applyDbInputChange handle structure (ZMZN_incrementalised_hoist) address = error "not implemented C"
+  applyDbInputChange handle structure (ZMZN_incrementalised_replace xs) relative_address = do
+    let address@(table, column, condition) = find_absolute_address structure relative_address
+    elem_columns <- setInitialValue handle structure xs
+    let new_head_id = either (error "noleft") (\a -> fromJust $ lookup "id" a) elem_columns
+    let sql = build_update table (column ++ "__id") new_head_id condition
+    putStrLn sql
+    execStatement_ handle sql >>= failIfError
+  applyDbInputChange handle structure change address = error "not implemented B"
 
 instance (DbInitialise elem) => DbInitialise [elem] where
   setInitialValue handle structure [] = setInitialValue' handle structure "ZMZN" "ZMZN" []
@@ -105,7 +130,7 @@ prepareTable handle structure (name, strategy, cons) = putStrLn sql >> execState
         columns_sql = concat $ intersperse "," columns_sql'
         columns_sql' = map (\(a, b) -> a ++ " " ++ b) columns
         columns = if length (snd $ head cons) == 1 && elem (head $ head $ snd $ head cons) ['a'..'z'] then [(name, head $ snd $ head cons)] else concat $ map con_columns cons
-        con_columns (con_name, members) = let a = concat $ zipWith (con_member_columns con_name) members [0..] in trace (show a) a
+        con_columns (con_name, members) = concat $ zipWith (con_member_columns con_name) members [0..]
 
         con_member_columns con_name member n
            | member == "" = separate_column "anything" n
