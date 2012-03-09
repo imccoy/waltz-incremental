@@ -49,7 +49,7 @@ db_incrementalised_instances_tdefs = map db_incrementalised_instances_tdef
 db_incrementalised_instances_tdef tdef@(Data qTcon tbinds cdefs) = typeclass_instance "DbIncrementalised" (mutant_tbinds tbinds) tdef incrementalise_name (tbinds ++ (mutant_tbinds tbinds)) applyDbInputChangeCdef
 
 db_initialised_instances_tdefs = map db_initialised_instances_tdef
-db_initialised_instances_tdef tdef@(Data qTcon tbinds cdefs) = typeclass_instance "DbInitialise" tbinds tdef id tbinds setInitialValueCdef
+db_initialised_instances_tdef tdef@(Data qTcon tbinds cdefs) = typeclass_instance "DbInitialise" tbinds tdef id tbinds (setInitialValueCdef qTcon)
 
 typeclass_instance name deps (Data qTcon tbinds cdefs) type_name_transformation all_tbinds method_builder = Hs.HsInstDecl hs_nowhere context (Hs.UnQual$ Hs.HsIdent name) [type_] [decl]
   where 
@@ -91,10 +91,11 @@ applyDbInputChangeCdef (Constr qDcon tbinds tys) = Hs.HsMatch hs_nowhere (Hs.HsI
  -}
 
 
-setInitialValueCdef (Constr qDcon tbinds tys) = Hs.HsMatch hs_nowhere (Hs.HsIdent "setInitialValue") pat (Hs.HsUnGuardedRhs exp) []
+setInitialValueCdef qTcon (Constr qDcon tbinds tys) = Hs.HsMatch hs_nowhere (Hs.HsIdent "setInitialValue") pat (Hs.HsUnGuardedRhs exp) []
   where (base_pat, base_pat_arg_names) = hs_pat_names (qDcon) "_base" (length tys)
         pat = [Hs.HsPVar $ Hs.HsIdent "handle", Hs.HsPVar $ Hs.HsIdent "structure", base_pat]
-        exp = Hs.HsApp (Hs.HsApp (app_with_handle_and_structure "setInitialValue'")
+        exp = Hs.HsApp (Hs.HsApp (Hs.HsApp (app_with_handle_and_structure "setInitialValue'")
+                                           (Hs.HsLit $ Hs.HsString $ snd qTcon))
                                  (Hs.HsLit $ Hs.HsString $ snd qDcon))
                        invocations
         invocations = Hs.HsList $ map (invocation) base_pat_arg_names
