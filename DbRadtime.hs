@@ -53,30 +53,38 @@ appendAddress address constructor fieldIndex = address ++ newPiece
 
 rootAddress = []
 
-atomicApplyDbInputChange reader shower handle structure change relative_address = let address@(table, column, condition) = find_absolute_address structure relative_address
-                                                                                   in do putStrLn $ build_select column table condition
-                                                                                         r <- execStatement handle $ build_select column table condition
-                                                                                         let v = case r of
-                                                                                                   Left e -> error $ "Couldn't select " ++ show address ++ ": " ++ e
-                                                                                                   Right ((((column_name,value):_):_):_) -> value
-                                                                                                   Right empty -> error $ "Couldn't select " ++ show address ++ ": was empty"
-                                                                                         let new_v = applyInputChange change (reader v)
-                                                                                         let update_sql = build_update table column (shower new_v) condition
-                                                                                         putStrLn $ update_sql
-                                                                                         execStatement_ handle update_sql >>= failIfError
+atomicApplyDbInputChange name reader shower handle structure change relative_address = do
+  let address@(table, column, condition) = find_absolute_address structure relative_address
+  putStrLn $ build_select column table condition
+  r <- execStatement handle $ build_select column table condition
+  let old_v_id = case r of
+                   Left e -> error $ "Couldn't select " ++ show address ++ ": " ++ e
+                   Right ((((column_name,value):_):_):_) -> value
+                   Right empty -> error $ "Couldn't select " ++ show address ++ ": was empty"
+  r' <- execStatement handle $ build_select name name $ "id = " ++ old_v_id
+  let old_v = case r' of
+                   Left e -> error $ "Couldn't select " ++ show address ++ " value: " ++ e
+                   Right ((((column_name,value):_):_):_) -> value
+  let new_v = applyInputChange change (reader old_v)
+  new_v_row <- setInitialValue handle structure new_v
+  let update_sql = build_update table column (snd $ head new_v_row) condition
+  putStrLn $ update_sql
+  execStatement_ handle update_sql >>= failIfError
               
 
 instance DbIncrementalised Char_incrementalised where
-  applyDbInputChange = atomicApplyDbInputChange (\a -> (head a) :: Char) (\a -> show a)
+  applyDbInputChange = atomicApplyDbInputChange "Char" (\a -> (head a) :: Char) (\(a :: Char) -> show a)
 
 instance DbInitialise Char where
-  setInitialValue handle structure c = return $ [("Char", [c])]
+  setInitialValue handle structure c = do perform_insert handle "Char" [("Constructor", "Char"), ("Char", [c])]
+                                          id <- getLastRowID handle
+                                          return [("id", show id), ("type", "Char")]
   
 instance DbIncrementalised Int_incrementalised where
-  applyDbInputChange = atomicApplyDbInputChange (\(Int a) -> (fromIntegral a) :: Int) (\a -> show a)
+  applyDbInputChange = atomicApplyDbInputChange "Int" (\(Int a) -> (fromIntegral a) :: Int) (\(a :: Int) -> show a)
 
 instance DbInitialise Int where
-  setInitialValue handle structure n = do perform_insert handle "Int" [("Int", show n)]
+  setInitialValue handle structure n = do perform_insert handle "Int" [("Constructor", "Int"), ("Int", show n)]
                                           id <- getLastRowID handle
                                           return [("id", show id), ("type", "Int")]
   
@@ -94,7 +102,7 @@ instance (DbIncrementalised elem_incrementalised, DbInitialise elem) =>
               Right ((((column_name,value):_):_):_) -> value
               Right empty -> error $ "Couldn't select " ++ show address ++ ": was empty"
     elem_columns <- setInitialValue handle structure elem
-    perform_insert handle "ZMZN" $ [("ZMZN__1__id", old_head_id), ("ZMZN__1__type", "ZMZN")] ++ (prepend_to_names "anything__0" elem_columns)
+    perform_insert handle "ZMZN" $ [("Constructor", "ZC"), ("ZMZN__1__id", old_head_id), ("ZMZN__1__type", "ZMZN")] ++ (prepend_to_names "anything__0" elem_columns)
     new_head_id <- getLastRowID handle
     let sql = build_update table column (show new_head_id) condition
     putStrLn sql
@@ -126,7 +134,7 @@ failIfError (Just m) = error m
 
 prepareTable :: SQLiteHandle -> DbStructure -> DbStructureRow -> IO ()
 prepareTable handle structure (name, strategy, cons) = putStrLn sql >> execStatement_ handle sql >>= failIfError
-  where sql = ("CREATE TABLE " ++ name ++ " (id INTEGER PRIMARY KEY AUTOINCREMENT, " ++ columns_sql ++ ")")
+  where sql = ("CREATE TABLE " ++ name ++ " (id INTEGER PRIMARY KEY AUTOINCREMENT, constructor TEXT, " ++ columns_sql ++ ")")
         columns_sql = concat $ intersperse "," columns_sql'
         columns_sql' = map (\(a, b) -> a ++ " " ++ b) columns
         columns = if length (snd $ head cons) == 1 && elem (head $ head $ snd $ head cons) ['a'..'z'] then [(name, head $ snd $ head cons)] else concat $ map con_columns cons
@@ -159,7 +167,7 @@ setInitialValue' handle structure type_name con_name actions =
      let con = fromJust (lookup con_name member_cons)
      columns <- sequence actions
      con_columns <- prepare_con_columns con columns
-     let flattened_columns = concat $ zipWith flattened_column con_columns [0..]
+     let flattened_columns = (("constructor", con_name)):(concat $ zipWith flattened_column con_columns [0..])
      reference_insert member_name flattened_columns type_name
   where flattened_column :: (String, [(String, String)]) -> Int -> [(String, String)]
         flattened_column (con_elem, name_values) n = map (\(name, value) -> (con_elem ++ "__" ++ show n ++ "__" ++ name, value)) name_values
@@ -212,17 +220,20 @@ class LoadableState a where
 
 instance (LoadableState a => LoadableState [a]) where
   load_state handle structure id = do
-    let sql = build_select_multi ["anything__0__id", "anything__0__type", "ZMZN__1__id"] "ZMZN" ("id = " ++ show id)
+    let sql = build_select_multi ["constructor", "anything__0__id", "anything__0__type", "ZMZN__1__id"] "ZMZN" ("id = " ++ show id)
     putStrLn sql
     r <- execStatement handle $ sql
-    let (elem_id, elem_type, tail_id) = case r of
+    let (constructor, elem_id, elem_type, tail_id) = case r of
                                           Left e -> error $ "Couldn't select ZMZN " ++ show id ++ ": " ++ e
                                           Right [] -> error $ "Couldn't select ZMZN" ++ show id ++ ": was empty"
-                                          Right ((row:_):_) -> (snd $ row !! 0, snd $ row !! 1, snd $ row !! 2)
+                                          Right ((row:_):_) -> (snd $ row !! 0, snd $ row !! 1, snd $ row !! 2, snd $ row !! 3)
                                           Right e -> error $ "Couldn't select ZMZN" ++ show id ++ ": was funky " ++ (show e)
-    tail <- load_state handle structure (read tail_id)
-    elem <- load_state handle structure (read elem_id)
-    return $ elem:tail
+    case constructor of
+      "ZMZN" -> return []
+      "ZC"   -> do tail <- load_state handle structure (read tail_id)
+                   elem <- load_state handle structure (read elem_id)
+                   return $ elem:tail
+      con    -> error $ "Unknown constructor for ZMZN " ++ con
                                                                                          
 
 instance LoadableState Char where 
@@ -234,7 +245,7 @@ instance LoadableState Char where
               Left e -> error $ "Couldn't select Char " ++ show id ++ ": " ++ e
               Right [] -> error $ "Couldn't select Char" ++ show id ++ ": was empty"
               Right ((row:_):_) -> snd $ row !! 0
-    return $ read v
+    return $ head v
  
 instance LoadableState Int where 
   load_state handle structure id = do
@@ -243,8 +254,9 @@ instance LoadableState Int where
     r <- execStatement handle $ sql
     let v = case r of
               Left e -> error $ "Couldn't select Int " ++ show id ++ ": " ++ e
-              Right [] -> error $ "Couldn't select Char" ++ show id ++ ": was empty"
+              Right [] -> error $ "Couldn't select Int " ++ show id ++ ": was empty"
               Right ((row:_):_) -> snd $ row !! 0
+              Right e -> error $ "Couldn't select Int " ++ show id ++ ": was funky " ++ show e
     return $ read v
  
 
