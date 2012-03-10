@@ -31,7 +31,7 @@ class DbIncrementalised incrementalised where
   applyDbInputChange :: SQLiteHandle -> DbStructure -> incrementalised -> DbAddress -> IO ()
 
 class DbInitialise base where
-  setInitialValue :: SQLiteHandle -> DbStructure -> base -> IO (Either String [(String, String)])
+  setInitialValue :: SQLiteHandle -> DbStructure -> base -> IO [(String, String)]
 
 
 data DbStrategy = Inline | Separate
@@ -70,13 +70,15 @@ instance DbIncrementalised Char_incrementalised where
   applyDbInputChange = atomicApplyDbInputChange (\a -> (head a) :: Char) (\a -> show a)
 
 instance DbInitialise Char where
-  setInitialValue handle structure c = return $ Right [("Char", [c])]
+  setInitialValue handle structure c = return $ [("Char", [c])]
   
 instance DbIncrementalised Int_incrementalised where
   applyDbInputChange = atomicApplyDbInputChange (\(Int a) -> (fromIntegral a) :: Int) (\a -> show a)
 
 instance DbInitialise Int where
-  setInitialValue handle structure n = return $ Right $ [("Int", show n)]
+  setInitialValue handle structure n = do perform_insert handle "Int" [("Int", show n)]
+                                          id <- getLastRowID handle
+                                          return [("id", show id), ("type", "Int")]
   
 instance (DbIncrementalised elem_incrementalised, DbInitialise elem) => 
             DbIncrementalised (ZMZN_incrementalised elem elem_incrementalised) where
@@ -86,15 +88,15 @@ instance (DbIncrementalised elem_incrementalised, DbInitialise elem) =>
 
   applyDbInputChange handle structure (ZC_incrementalised_build_using_1 elem) relative_address = do
     let address@(table, column, condition) = find_absolute_address structure relative_address
-    r <- execStatement handle $ build_select (column ++ "__id") table condition
+    r <- execStatement handle $ build_select column table condition
     let old_head_id = case r of
               Left e -> error $ "Couldn't select " ++ show address ++ ": " ++ e
               Right ((((column_name,value):_):_):_) -> value
               Right empty -> error $ "Couldn't select " ++ show address ++ ": was empty"
     elem_columns <- setInitialValue handle structure elem
-    perform_insert handle "ZMZN" $ [("ZMZN__1__id", old_head_id), ("ZMZN__1__type", "ZMZN")] ++ (either (error "noleft") (prepend_to_names "anything__0") elem_columns)
+    perform_insert handle "ZMZN" $ [("ZMZN__1__id", old_head_id), ("ZMZN__1__type", "ZMZN")] ++ (prepend_to_names "anything__0" elem_columns)
     new_head_id <- getLastRowID handle
-    let sql = build_update table (column ++ "__id") (show new_head_id) condition
+    let sql = build_update table column (show new_head_id) condition
     putStrLn sql
     execStatement_ handle sql >>= failIfError
 
@@ -103,8 +105,8 @@ instance (DbIncrementalised elem_incrementalised, DbInitialise elem) =>
   applyDbInputChange handle structure (ZMZN_incrementalised_replace xs) relative_address = do
     let address@(table, column, condition) = find_absolute_address structure relative_address
     elem_columns <- setInitialValue handle structure xs
-    let new_head_id = either (error "noleft") (\a -> fromJust $ lookup "id" a) elem_columns
-    let sql = build_update table (column ++ "__id") new_head_id condition
+    let new_head_id = fromJust $ lookup "id" elem_columns
+    let sql = build_update table column new_head_id condition
     putStrLn sql
     execStatement_ handle sql >>= failIfError
   applyDbInputChange handle structure change address = error "not implemented B"
@@ -116,10 +118,7 @@ instance (DbInitialise elem) => DbInitialise [elem] where
 prepareDb structure initial_value = do
   handle <- openConnection "db"
   mapM_ (prepareTable handle structure) structure
-  initial_value_columns <- setInitialValue handle structure initial_value
-  case initial_value_columns of
-    Right cols -> void $ perform_insert handle "AppState" cols
-    Left val -> error "What, a single value? Madness!"
+  setInitialValue handle structure initial_value
   return handle
 
 failIfError Nothing = return ()
@@ -136,13 +135,9 @@ prepareTable handle structure (name, strategy, cons) = putStrLn sql >> execState
         con_member_columns con_name member n
            | member == "" = separate_column "anything" n
            | elem (head member) ['a'..'z'] = [("", member)]
-           | member_strategy == Inline = inline_column member_name member_cons n
-           | member_strategy == Separate = separate_column member_name n
+           | otherwise = separate_column member_name n
           where (member_name, member_strategy, member_cons) = lookup_in_structure structure member
         separate_column member_name n = prepend_to_names (member_name ++ "__" ++ (show n)) $ [("type", "text"), ("id", "integer")]
-        inline_column member_name member_cons n = prepend_to_names (member_name ++ "__" ++ (show n)) $ concat $ map inline_column_con member_cons
-        inline_column_con (con_name, members)
-          | otherwise                                                    = prepend_to_names con_name $ con_columns (con_name, members)
 
 lookup_in_structure structure "" = ("anything", Separate, [])
 lookup_in_structure structure s = case find (\(a, _, _) -> a == s) structure of
@@ -157,7 +152,7 @@ prepend_to_names s = map (\(a, b) -> (prepend s a, b))
         prepend a b = a ++ "__" ++ b
 
 
-setInitialValue' :: SQLiteHandle -> DbStructure -> String -> String -> [IO (Either String [(String, String)])] -> IO (Either String [(String, String)])
+setInitialValue' :: SQLiteHandle -> DbStructure -> String -> String -> [IO [(String, String)]] -> IO [(String, String)]
 setInitialValue' handle structure type_name con_name actions = 
   do let (member_name, member_strategy, member_cons :: [DbStructureConstructor]) = lookup_in_structure structure type_name
      -- let con = maybe (error "Couldn't find con " ++ con_name ++ " for " ++ type_name) id $ (lookup con_name member_cons)
@@ -165,23 +160,20 @@ setInitialValue' handle structure type_name con_name actions =
      columns <- sequence actions
      con_columns <- prepare_con_columns con columns
      let flattened_columns = concat $ zipWith flattened_column con_columns [0..]
-     case member_strategy of
-       Inline -> return $ Right flattened_columns
-       otherwise -> fmap Right $ reference_insert member_name flattened_columns type_name
-  where flattened_column :: (String, Either String [(String, String)]) -> Int -> [(String, String)]
-        flattened_column (con_elem, Left value) n = [(con_elem ++ "__" ++ show n, value)]
-        flattened_column (con_elem, Right name_values) n = map (\(name, value) -> (con_elem ++ "__" ++ show n ++ (if (elem (head name) ['a'..'z']) then ("__" ++ name) else ""), value)) name_values
+     reference_insert member_name flattened_columns type_name
+  where flattened_column :: (String, [(String, String)]) -> Int -> [(String, String)]
+        flattened_column (con_elem, name_values) n = map (\(name, value) -> (con_elem ++ "__" ++ show n ++ "__" ++ name, value)) name_values
 
         reference_insert table columns type_name = do perform_insert handle table columns
                                                       id <- getLastRowID handle
                                                       return [("id", show id), ("type", type_name)]
 
         prepare_con_columns con columns = sequence $ zipWith prepare_con_column con columns
-        prepare_con_column "" (Right columns)
-          | (fst $ head columns) == "id" = return ("anything", Right columns)
+        prepare_con_column "" columns
+          | (fst $ head columns) == "id" = return ("anything", columns)
           | otherwise                    = do columns' <- reference_insert (fst $ head columns) columns (fst $ head columns)
-                                              return ("anything", Right columns')
-        prepare_con_column con_elem (Right columns) = return (con_elem, Right columns)
+                                              return ("anything", columns')
+        prepare_con_column con_elem columns = return (con_elem, columns)
                            
 
 perform_insert _ _ [] = return ()
@@ -203,15 +195,13 @@ build_insert table values = let cols_sql = concat $ intersperse ", " $ map fst v
                              in "INSERT INTO " ++ table ++ " (" ++ cols_sql ++ ") VALUES (" ++ vals_sql ++ ")"
 
 find_absolute_address _ [] = error "find_absolute_address: no root"
-find_absolute_address structure ((DbAddressComponent rootCon fieldIndex):address) = foldl (find_absolute_address' structure) initial address
-  where initial = (rootCon, (constructor !! fieldIndex) ++ "__" ++ (show fieldIndex), "")
+find_absolute_address structure complete_address@((DbAddressComponent rootCon fieldIndex):address) = foldl (find_absolute_address' structure) initial address
+  where initial = (rootCon, (constructor !! fieldIndex) ++ "__" ++ (show fieldIndex) ++ "__id", "")
         (_, _, constructors) = lookup_in_structure structure rootCon
         constructor = snd $ head $ constructors -- should be a lookup based on part of fieldIndex, not currently captured
 
 find_absolute_address' structure (table, field, condition) (DbAddressComponent addr_con field_index)
-    | strategy == Inline && elem (head $ head $ snd $ head $ constructors) ['a'..'z'] = (table, field ++ "__" ++ (show field_index) ++ "__" ++ field, condition)
-    | strategy == Inline = (table, field ++ "__" ++ (show field_index), condition)
-    | strategy == Separate = (name, "", "id = (" ++ (build_select (field ++ "__" ++ (show field_index)) table condition) ++ ")") 
+    = (name, "", "id = (" ++ (build_select (field ++ "__" ++ (show field_index)) table condition) ++ ")") 
   where (name, strategy, constructors) = lookup_in_structure structure addr_con
 
 
@@ -246,6 +236,18 @@ instance LoadableState Char where
               Right ((row:_):_) -> snd $ row !! 0
     return $ read v
  
+instance LoadableState Int where 
+  load_state handle structure id = do
+    let sql = build_select "Int" "Int" ("id = " ++ show id)
+    putStrLn sql
+    r <- execStatement handle $ sql
+    let v = case r of
+              Left e -> error $ "Couldn't select Int " ++ show id ++ ": " ++ e
+              Right [] -> error $ "Couldn't select Char" ++ show id ++ ": was empty"
+              Right ((row:_):_) -> snd $ row !! 0
+    return $ read v
+ 
+
 
 
 app handle structure parse_request incrementalised_state_function representationFunction request = do
