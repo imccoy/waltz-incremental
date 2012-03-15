@@ -5,20 +5,7 @@ import qualified Language.Haskell.Pretty as HsPretty
 import Incrementalizer
 import Utils
 
-typeclass_instances (Module (M (_, _, name)) tdefs vdefgs) = Hs.HsModule hs_nowhere (Hs.Module $ name ++ "instances") Nothing imports $ typeclass_instances_tdefs tdefs
-  where imports = [Hs.HsImportDecl { Hs.importLoc = hs_nowhere
-                                   , Hs.importModule = Hs.Module name
-                                   , Hs.importQualified = False
-                                   , Hs.importAs = Nothing
-                                   , Hs.importSpecs = Nothing
-                                   },
-                   Hs.HsImportDecl { Hs.importLoc = hs_nowhere
-                                   , Hs.importModule = Hs.Module "Radtime"
-                                   , Hs.importQualified = False
-                                   , Hs.importAs = Nothing
-                                   , Hs.importSpecs = Nothing
-                                   }
-                   ]
+typeclass_instances (Module (M (_, _, name)) tdefs vdefgs) = add_imports (Hs.HsModule hs_nowhere (Hs.Module $ name ++ "instances") Nothing [] $ typeclass_instances_tdefs tdefs) [name, "Radtime"]
 
 typeclass_instances_tdefs = map typeclass_instances_tdef
 typeclass_instances_tdef (Data qTcon tbinds cdefs) = Hs.HsInstDecl hs_nowhere context (Hs.UnQual$ Hs.HsIdent "Incrementalised") types [decl]
@@ -62,11 +49,10 @@ hs_pat_names qDcon suffix n = (Hs.HsPApp hs_con args, names)
 
 hs_n_pat_names suffix n = take n $ map (\n -> Hs.HsIdent (n:suffix)) ['a'..]
 
-hs_nowhere = Hs.SrcLoc "nowhere" 0 0
 
 
 main = do
-  core <- coreFileContents
+  core <- coreFileContents "B.hcr"
   let typeclass_instances_code = typeclass_instances core
   putStrLn $ show typeclass_instances_code
   writeFileContents "Bprime.instances.hs" $ "{-# LANGUAGE MultiParamTypeClasses #-}\n" ++ (HsPretty.prettyPrint typeclass_instances_code)

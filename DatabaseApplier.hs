@@ -7,14 +7,7 @@ import qualified Language.Haskell.Pretty as HsPretty
 import Incrementalizer
 import Utils
 
-typeclass_instances (Module (M (_, _, name)) tdefs vdefgs) = Hs.HsModule hs_nowhere (Hs.Module $ name ++ "instances") Nothing imports $ (typeclass_instances_tdefs tdefs) ++ (db_strategy tdefs)
-  where imports = [import_decl name, import_decl "Radtime", import_decl "DbRadtime"]
-        import_decl name = Hs.HsImportDecl { Hs.importLoc = hs_nowhere
-                                           , Hs.importModule = Hs.Module name
-                                           , Hs.importQualified = False
-                                           , Hs.importAs = Nothing
-                                           , Hs.importSpecs = Nothing
-                                           }
+typeclass_instances (Module (M (_, _, name)) tdefs vdefgs) = add_imports (Hs.HsModule hs_nowhere (Hs.Module $ name ++ "instances") Nothing [] $ (typeclass_instances_tdefs tdefs) ++ (db_strategy tdefs)) [name, "Radtime", "DbRadtime"]
 
 is_recursive (Data qTcon tbinds cdefs) tdefs = (ty_matches qTcon) `List.any` types_mentioned_in cdefs
   where
@@ -115,11 +108,8 @@ hs_pat_names qDcon suffix n = (Hs.HsPApp hs_con args, names)
 
 hs_n_pat_names suffix n = take n $ map (\n -> Hs.HsIdent (n:suffix)) ['a'..]
 
-hs_nowhere = Hs.SrcLoc "nowhere" 0 0
-
-
 main = do
-  core <- coreFileContents
+  core <- coreFileContents "B.hcr"
   let typeclass_instances_code = typeclass_instances core
   putStrLn $ show typeclass_instances_code
   writeFileContents "Bprime.dbinstances.hs" $ "{-# LANGUAGE MultiParamTypeClasses, UndecidableInstances #-}\n" ++ (HsPretty.prettyPrint typeclass_instances_code)

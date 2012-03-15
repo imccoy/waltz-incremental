@@ -1,7 +1,6 @@
-module Incrementalizer where
+module Incrementalizer (incrementalize, mutant_tbinds) where
 
 import Control.Monad
-import Control.Monad.Error
 import qualified Data.Data as Data
 import Data.Either
 import Data.Maybe
@@ -13,6 +12,7 @@ import Language.Core.Core
 import Utils
 import Zcode
 
+incrementalize = mutant
 
 mutant (Module name tdefs vdefgs) = Module name tdefs' vdefgs'
   where tdefs' = tdefs ++ (mutant_tdefs tdefs)

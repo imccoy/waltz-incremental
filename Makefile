@@ -28,11 +28,11 @@ web: Waltz.hs App.hs
 	./App
 
 Bprime.hs: hcr2hs Bprime.hcr
-	./hcr2hs # hcr2hs is hardcoded to read Bprime.hcr and produce Bprime.hs
+	./hcr2hs Bprime.hcr Bprime.hs
 	(echo "2i"; echo "import Radtime"; echo "."; echo "wq") | ed Bprime.hs
 
-hcr2hs: hcr2hs.hs Zcode.hs
-	ghc --make hcr2hs.hs
+hcr2hs: hcr2hs.hs HcrHs.hs Zcode.hs
+	ghc --make hcr2hs.hs HcrHs.hs
 
 Bprime.hcr: Incrementalizer B.hcr
 	./Incrementalizer # rad is hardcoded to read B.hcr and produce Bprime.hcr

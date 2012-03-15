@@ -6,6 +6,7 @@ Bprime.hs
 Bprime.*instances.hs
 Bprime
 Bprime-web
+ghc-incr
 hcr2hs
 Incrementalizer
 App

@@ -9,6 +9,19 @@ import Language.Core.ParseGlue
 
 import Zcode
 
+import qualified Language.Haskell.Syntax as Hs
+
+add_imports (Hs.HsModule loc name thing imports defs) additional_import_names = Hs.HsModule loc name thing (imports ++ additional_imports) defs
+  where additional_imports = map additional_import additional_import_names
+        additional_import name = Hs.HsImportDecl { Hs.importLoc = hs_nowhere
+                                                 , Hs.importModule = Hs.Module name
+                                                 , Hs.importQualified = False
+                                                 , Hs.importAs = Nothing
+                                                 , Hs.importSpecs = Nothing
+                                                 }
+
+
+hs_nowhere = Hs.SrcLoc "nowhere" 0 0
 
 generate_cdef_builds qTcon tys builder = builds [] tys 0
   where builds tys1 (ty:tys2) n 
@@ -25,8 +38,8 @@ incrementalise_name = apply_to_name (zencode . incrementalise_string)
 
 apply_to_name f (mod, name) = (mod, f name)
 
-coreFileContents = do
-  file <- openFile "B.hcr" ReadMode
+coreFileContents filename = do
+  file <- openFile filename ReadMode
   contents <- hGetContents file
   case parse contents 0 of
     (FailP e) -> do putStrLn "HORRIBLY WRONG"
