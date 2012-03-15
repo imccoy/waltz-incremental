@@ -1,0 +1,33 @@
+Name:           Waltz
+Version:        0.0
+Cabal-Version:  >= 1.2
+License:        BSD3
+Author:         Iain McCoy
+Synopsis:       The deranged blatherings of a madman
+Build-Type:     Simple
+
+
+Executable Incrementalizer
+  Hs-Source-Dirs: src
+  Main-Is:        IncrementalizerMain.hs
+  Other-Modules:  Incrementalizer Utils
+  build-depends: base, haskell98, extcore
+
+Executable hcr2hs
+  Hs-Source-Dirs: src
+  Main-Is:        hcr2hs.hs
+  Other-Modules:  Utils HcrHs
+  build-depends: base, haskell98, haskell-src, extcore
+
+Executable DatabaseApplier
+  Hs-Source-Dirs: src
+  Main-Is:        DatabaseApplierMain.hs
+  Other-Modules:  Incrementalizer Utils DatabaseApplier
+  build-depends: base, haskell98, haskell-src, extcore
+
+
+Executable InMemoryApplier
+  Hs-Source-Dirs: src
+  Main-Is:        InMemoryApplierMain.hs
+  Other-Modules:  Incrementalizer Utils InMemoryApplier
+  build-depends: base, haskell98, haskell-src, extcore
