@@ -1,3 +1,5 @@
+module DatabaseApplier (db_applier) where
+
 import qualified Data.List as List
 
 import Language.Core.Core
@@ -6,6 +8,8 @@ import qualified Language.Haskell.Pretty as HsPretty
 
 import Incrementalizer
 import Utils
+
+db_applier = typeclass_instances
 
 typeclass_instances (Module (M (_, _, name)) tdefs vdefgs) = add_imports (Hs.HsModule hs_nowhere (Hs.Module $ name ++ "instances") Nothing [] $ (typeclass_instances_tdefs tdefs) ++ (db_strategy tdefs)) [name, "Radtime", "DbRadtime"]
 

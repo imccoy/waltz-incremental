@@ -20,6 +20,10 @@ add_imports (Hs.HsModule loc name thing imports defs) additional_import_names = 
                                                  , Hs.importSpecs = Nothing
                                                  }
 
+merge_hs base mods = simplify_imports $ foldl merge' base mods
+  where merge' (Hs.HsModule loc name thing imports defs) (Hs.HsModule loc' name' thing' imports' defs') = Hs.HsModule loc name thing (imports ++ imports') (defs ++ defs')
+        simplify_imports (Hs.HsModule loc name thing imports defs) = (Hs.HsModule loc name thing (simplified_imports name imports) defs)
+        simplified_imports name imports = filter (\imp -> Hs.importModule imp /= name) imports
 
 hs_nowhere = Hs.SrcLoc "nowhere" 0 0
 

@@ -1,9 +1,13 @@
+module InMemoryApplier (in_memory_applier) where
+
 import Language.Core.Core
 import qualified Language.Haskell.Syntax as Hs
 import qualified Language.Haskell.Pretty as HsPretty
 
 import Incrementalizer
 import Utils
+
+in_memory_applier = typeclass_instances
 
 typeclass_instances (Module (M (_, _, name)) tdefs vdefgs) = add_imports (Hs.HsModule hs_nowhere (Hs.Module $ name ++ "instances") Nothing [] $ typeclass_instances_tdefs tdefs) [name, "Radtime"]
 
