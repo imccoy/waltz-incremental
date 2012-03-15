@@ -4,7 +4,6 @@ import qualified Data.List as List
 
 import Language.Core.Core
 import qualified Language.Haskell.Syntax as Hs
-import qualified Language.Haskell.Pretty as HsPretty
 
 import Incrementalizer
 import Utils
@@ -112,9 +111,3 @@ hs_pat_names qDcon suffix n = (Hs.HsPApp hs_con args, names)
 
 hs_n_pat_names suffix n = take n $ map (\n -> Hs.HsIdent (n:suffix)) ['a'..]
 
-main = do
-  core <- coreFileContents "B.hcr"
-  let typeclass_instances_code = typeclass_instances core
-  putStrLn $ show typeclass_instances_code
-  writeFileContents "Bprime.dbinstances.hs" $ "{-# LANGUAGE MultiParamTypeClasses, UndecidableInstances #-}\n" ++ (HsPretty.prettyPrint typeclass_instances_code)
-  return ()

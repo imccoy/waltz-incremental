@@ -1,6 +1,6 @@
 default: Bprime Bprime-web Bprime-web-db
 	./Bprime
-	echo "try Bprime-web or Bprime-web-db"
+	echo "try Bprime-web or Bprime-web-db for moar fun"
 
 Bprime: Bprime.hs Radtime.hs Bprime.main.hs Bprime.instances.hs
 	ghc -o Bprime Bprime.hs Bprime.main.hs Bprime.instances.hs
@@ -12,16 +12,16 @@ Bprime-web-db: Bprime.hs Radtime.hs Bprime.web.hs Bprime.dbinstances.hs
 	ghc -o Bprime-web Bprime.hs Bprime.dbweb.hs Bprime.dbinstances.hs Bprime.dbinstances-manual.hs
 
 Bprime.instances.hs: InMemoryApplier
-	./InMemoryApplier # reads Bprime.hs and produces Bprime.instances.hs
+	./InMemoryApplier B.hcr Bprime.instances.hs
 
-InMemoryApplier: InMemoryApplier.hs Utils.hs
-	ghc -o InMemoryApplier InMemoryApplier.hs Utils.hs
+InMemoryApplier: InMemoryApplier.hs InMemoryApplierMain.hs Utils.hs
+	ghc -o InMemoryApplier InMemoryApplier.hs InMemoryApplierMain.hs Utils.hs
 
 Bprime.dbinstances.hs: DatabaseApplier
-	./DatabaseApplier # reads Bprime.hs and produces Bprime.dbinstances.hs
+	./DatabaseApplier B.hcr Bprime.dbinstances.hs
 
-DatabaseApplier: DatabaseApplier.hs Utils.hs
-	ghc -o DatabaseApplier DatabaseApplier.hs Utils.hs
+DatabaseApplier: DatabaseApplier.hs DatabaseApplierMain.hs Utils.hs
+	ghc -o DatabaseApplier DatabaseApplier.hs DatabaseApplierMain.hs Utils.hs
 
 web: Waltz.hs App.hs
 	ghc -o App App.hs
@@ -35,7 +35,7 @@ hcr2hs: hcr2hs.hs HcrHs.hs Zcode.hs
 	ghc --make hcr2hs.hs HcrHs.hs
 
 Bprime.hcr: Incrementalizer B.hcr
-	./Incrementalizer # rad is hardcoded to read B.hcr and produce Bprime.hcr
+	./Incrementalizer B.hcr Bprime.hcr
 
 B.hcr: B.hs
 	ghc -fext-core -fforce-recomp -c B.hs

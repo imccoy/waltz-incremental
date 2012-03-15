@@ -1,6 +1,8 @@
 module Utils where
 
+import Control.Monad
 import IO
+import System (getArgs)
 import System.Exit
 
 import Language.Core.Core
@@ -56,4 +58,11 @@ writeFileContents filename content =  do
   hPutStr file $ content
   hClose file
 
+parseSrcDest name fromHint toHint = do
+  args <- getArgs
+  when (length args /= 2) $ do
+    putStrLn $ "Usage: " ++ name ++ " <from" ++ fromHint ++ "> <to" ++ toHint ++ ">"
+    exitFailure
+  let (from:to:[]) = args
+  return (from, to)
 
