@@ -19,8 +19,8 @@ mutant (Module name tdefs vdefgs) = Module name tdefs' vdefgs'
         vdefgs' = vdefgs ++ (mutant_vdefgs vdefgs)
 
 mutant_tdefs = map mutant_tdef
-mutant_tdef (Data qTcon tbinds cdefs) = Data (incrementalise_name qTcon) (tbinds ++ mutant_tbinds tbinds) $ cdefs
-  where cdefs = (mutant_cdefs cdefs) ++ (mutant_cdefs_builds qTcon tbinds cdefs) ++ [hoist_cdef qTcon]
+mutant_tdef (Data qTcon tbinds cdefs) = Data (incrementalise_name qTcon) (tbinds ++ mutant_tbinds tbinds) $ 
+                                             (mutant_cdefs cdefs) ++ (mutant_cdefs_builds qTcon tbinds cdefs) ++ [hoist_cdef qTcon, replacement_cdef qTcon tbinds]
 mutant_tdef (Newtype qTcon1 qTcon2 tbinds ty) = Newtype (incrementalise_name qTcon1) (incrementalise_name qTcon2) (mutant_tbinds tbinds) (mutant_ty ty)
 
 mutant_cdefs_builds qTcon tbinds cdefs = concat $ map (mutant_cdef_builds qTcon) cdefs
@@ -58,10 +58,10 @@ mutant_vbind (var, ty) = (zencode $ incrementalise_string var, mutant_ty ty)
 mutant_bind (Vb vbind) = Vb $ mutant_vbind vbind
 mutant_bind (Tb tbind) = Tb $ mutant_tbind tbind
 
-mutant_alts ty = concat . (map $ mutant_alt ty)
+mutant_alts ty result_ty alts = (mutant_alt_lits ty result_ty alts):(concat (map (mutant_alt ty result_ty) alts))
 --mutant_alt ty (Acon qDcon tbinds [] exp) = [Acon (adjust_type_reference "replace" ty) (mutant_tbinds tbinds) [("a", Tvar "a")] (App (Dcon $ adjust_type_reference "replace" ty) exp)]
-mutant_alt ty (Acon qDcon tbinds [] exp) = []
-mutant_alt ty (Acon qDcon tbinds vbinds exp) = (builds [] vbinds 0) $ [recursive_case]
+mutant_alt ty result_ty (Acon qDcon tbinds [] exp) = []
+mutant_alt ty result_ty (Acon qDcon tbinds vbinds exp) = (builds [] vbinds 0) $ [recursive_case]
   where recursive_case = Acon (incrementalise_name qDcon) (mutant_tbinds tbinds) (mutant_vbinds vbinds) (mutant_exp exp)
         builds :: [Vbind] -> [Vbind] -> Int -> [Alt] -> [Alt]
         builds vbinds1 (vbind@(vbind_var,vbind_ty):vbinds2) n cons
@@ -93,8 +93,16 @@ mutant_alt ty (Acon qDcon tbinds vbinds exp) = (builds [] vbinds 0) $ [recursive
                               in builds (vbinds1 ++ [vbind]) vbinds2 (n+1) (acon:cons)
           | otherwise      = builds (vbinds1 ++ [vbind]) vbinds2 (n+1) cons
         builds _ _ _ cons = cons
-mutant_alt ty (Alit lit exp) = [Alit lit $ mutant_exp exp]
-mutant_alt ty (Adefault exp) = [Adefault $ mutant_exp exp]
+mutant_alt ty result_ty (Alit lit exp) = []
+mutant_alt ty result_ty (Adefault exp) = [Adefault $ mutant_exp exp]
+
+mutant_alt_lits ty result_ty alts = Acon (replacement_type_reference ty) [] [("replace_val", ty)]
+                               (Case (Var $ unqual "replace_val") ("replace_val", ty) (mutant_ty ty)
+                                     (mapMaybe (mutant_alt_lit ty result_ty) alts)
+                               )
+mutant_alt_lit ty result_ty (Alit lit exp)                 = Just $ Alit lit                 (App (Var $ replacement_type_reference $ result_ty) exp)
+mutant_alt_lit ty result_ty (Acon qDcon tbinds vbinds exp) = Just $ Acon qDcon tbinds vbinds (App (Var $ replacement_type_reference $ result_ty) exp)
+mutant_alt_lit ty result_ty (Adefault _)   = Nothing
 
 hoistable_type_reference = adjust_type_reference "hoist"
 identity_type_reference = adjust_type_reference "identity"
@@ -115,19 +123,15 @@ mutant_exp (Appt exp ty) = Appt (mutant_exp exp) (mutant_ty ty)
 mutant_exp (Lam (Tb tbind) exp) = Lam (mutant_bind $ Tb tbind) (mutant_exp exp)
 
 -- for \ a -> b, need to check if a is a (incrementalize_type a)_hoist. If so, produce a (incrementalize_type b)_identity.
---                             if a is a (incrementalize_type a)_replace. If so, produce a (incrementalize_type b)_replace with the result of applying the lambda
 mutant_exp (Lam (Vb vbind) exp) = case type_of_exp exp of
                                     Right param_exp_type -> Lam (Vb newBind) $ Case (Var $ unqual $ fst newBind) vbind (snd newBind) [
                                                                                  Acon (hoistable_type_reference $ snd vbind) [] [] 
                                                                                       (Var $ identity_type_reference $ param_exp_type),
-                                                                                 Acon (replacement_type_reference $ snd vbind) [] [(vbind)]
-                                                                                      (App (Var $ replacement_type_reference param_exp_type)
-                                                                                           exp),
                                                                                  Adefault (mutant_exp exp) ]
                                                                                where (Vb newBind) = mutant_bind $ Vb vbind
                                     Left e -> Lam (mutant_bind $ Vb vbind) (mutant_exp exp)
 mutant_exp (Let vdefg exp) = Let (mutant_vdefg vdefg) (mutant_exp exp)
-mutant_exp (Case exp vbind ty alts) = Case (mutant_exp exp) (mutant_vbind vbind) (mutant_ty ty) (mutant_alts (snd vbind) alts)
+mutant_exp (Case exp vbind ty alts) = Case (mutant_exp exp) (mutant_vbind vbind) (mutant_ty ty) (mutant_alts (snd vbind) ty alts)
 mutant_exp (Cast exp ty) = Cast (mutant_exp exp) (mutant_ty ty)
 mutant_exp (Note string exp) = Note string $ mutant_exp exp
 mutant_exp (External string ty) = error "mutant_exp don't know externals from infernos"
@@ -155,6 +159,9 @@ type_of_exp (Cast exp ty)            = Right $ ty
 type_of_exp (Note string exp)        = type_of_exp exp
 type_of_exp exp                      = Left $ "Unknown type of exp" ++ (show $ Data.toConstr exp )  ++ " " ++ show exp
 
+unsafe_type_of_exp a = case type_of_exp a of
+                         Right a -> a
+                         Left e -> error e
 
 
 

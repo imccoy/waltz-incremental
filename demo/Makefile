@@ -25,7 +25,7 @@ Bprime.dbinstances.hs: $(DatabaseApplier)
 
 Bprime.hs: $(hcr2hs) Bprime.hcr
 	$(hcr2hs) Bprime.hcr Bprime.hs
-	(echo "2i"; echo "import ../support/Radtime"; echo "."; echo "wq") | ed Bprime.hs
+	(echo "2i"; echo "import Radtime"; echo "."; echo "wq") | ed Bprime.hs
 
 Bprime.hcr: $(Incrementalizer) B.hcr
 	$(Incrementalizer) B.hcr Bprime.hcr
