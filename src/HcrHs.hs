@@ -26,6 +26,8 @@ transformed_vdef (Core.Vdef ((_, name), ty, exp)) = Hs.HsFunBind $ [Hs.HsMatch n
 
 transformed_tdef (Core.Data tcon tbinds cdefs) = Hs.HsDataDecl nowhere [] (Hs.HsIdent $ snd tcon) (map (Hs.HsIdent . fst) tbinds) (map transformed_cdef cdefs ) []
   where transformed_cdef (Core.Constr dcon tbinds tys) = Hs.HsConDecl nowhere (Hs.HsIdent $ zdecode $ snd dcon) $ map Hs.HsUnBangedTy $ map transformed_ty tys
+transformed_tdef (Core.Newtype tcon coercionName tbinds ty) = Hs.HsNewTypeDecl nowhere [] (Hs.HsIdent $ snd tcon) [{- nameList -}] 
+                                                                               (Hs.HsConDecl nowhere (Hs.HsIdent $ snd tcon) [Hs.HsUnBangedTy $ transformed_ty ty]) [{- no derives -}]
 
 transformed_ty (Core.Tvar tvar) = Hs.HsTyVar $ Hs.HsIdent $ tvar
 transformed_ty (Core.Tapp tvar1 tvar2) = Hs.HsTyApp (transformed_ty tvar1) (transformed_ty tvar2)
