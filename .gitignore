@@ -3,6 +3,7 @@ dist
 *.o
 demo/*.hcr
 demo/db
+demo/deps
 demo/Bprime.hs
 demo/Bprime.*instances.hs
 demo/Bprime

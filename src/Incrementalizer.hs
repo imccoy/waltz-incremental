@@ -19,7 +19,9 @@ mutant (Module name tdefs vdefgs) = Module name tdefs' vdefgs'
         vdefgs' = vdefgs ++ (mutant_vdefgs vdefgs)
 
 mutant_tdefs = map mutant_tdef
-mutant_tdef (Data qTcon tbinds cdefs) = Data (incrementalise_name qTcon) (tbinds ++ mutant_tbinds tbinds) $ (mutant_cdefs cdefs) ++ (mutant_cdefs_builds qTcon tbinds cdefs) ++ [hoist_cdef qTcon]
+mutant_tdef (Data qTcon tbinds cdefs) = Data (incrementalise_name qTcon) (tbinds ++ mutant_tbinds tbinds) $ cdefs
+  where cdefs = (mutant_cdefs cdefs) ++ (mutant_cdefs_builds qTcon tbinds cdefs) ++ [hoist_cdef qTcon]
+mutant_tdef (Newtype qTcon1 qTcon2 tbinds ty) = Newtype (incrementalise_name qTcon1) (incrementalise_name qTcon2) (mutant_tbinds tbinds) (mutant_ty ty)
 
 mutant_cdefs_builds qTcon tbinds cdefs = concat $ map (mutant_cdef_builds qTcon) cdefs
 mutant_cdef_builds qTcon (Constr qDcon tbinds tys) = generate_cdef_builds qTcon tys builder
@@ -32,6 +34,7 @@ mutant_cdefs = map mutant_cdef
 mutant_cdef (Constr dcon tbinds tys) = Constr (incrementalise_name dcon) (mutant_tbinds tbinds) (mutant_tys tys)
 
 hoist_cdef qTcon = Constr (hoistable_type_reference $ Tcon qTcon) [] []
+replacement_cdef qTcon tbinds = Constr (replacement_type_reference $ Tcon qTcon) tbinds [(Tcon qTcon)]
 
 mutant_tys = map mutant_ty
 mutant_ty (Tvar tvar) = Tvar $ incrementalise_string tvar
@@ -58,9 +61,21 @@ mutant_bind (Tb tbind) = Tb $ mutant_tbind tbind
 mutant_alts ty = concat . (map $ mutant_alt ty)
 --mutant_alt ty (Acon qDcon tbinds [] exp) = [Acon (adjust_type_reference "replace" ty) (mutant_tbinds tbinds) [("a", Tvar "a")] (App (Dcon $ adjust_type_reference "replace" ty) exp)]
 mutant_alt ty (Acon qDcon tbinds [] exp) = []
-mutant_alt ty (Acon qDcon tbinds vbinds exp) = (builds [] vbinds 0) [Acon (incrementalise_name qDcon) (mutant_tbinds tbinds) (mutant_vbinds vbinds) (mutant_exp exp)]
-  where builds :: [Vbind] -> [Vbind] -> Int -> [Alt] -> [Alt]
+mutant_alt ty (Acon qDcon tbinds vbinds exp) = (builds [] vbinds 0) $ [recursive_case]
+  where recursive_case = Acon (incrementalise_name qDcon) (mutant_tbinds tbinds) (mutant_vbinds vbinds) (mutant_exp exp)
+        builds :: [Vbind] -> [Vbind] -> Int -> [Alt] -> [Alt]
         builds vbinds1 (vbind@(vbind_var,vbind_ty):vbinds2) n cons
+          -- This is all about building a new value around an old one, for instance consing an element onto the head of a list.
+          -- n is the index of the argument to the constructor that is being fed the old value, so in `data List a = Cons a (List a)' it would point to (List a)
+          -- We require all other arguments to the constructor being incrementalised - in this case, just a - to be provided as part of the incrementalised_build constructor
+          -- Consider a function length (x:xs) = 1 + length xs
+          -- We need to turn this into something that will return an incrementalised value, where the "length xs" term has gone away.
+          -- To achieve this, we incrementalise the RHS as usual, but we make some assignments beforehand. We define xs_incrementalised as a hoist value, and elsewhere arrange
+          -- for length_incrementalised to respond to a hoist value by making the term go away. More work is required to make the right thing happen when
+          -- more than one hoist value is involved.
+          -- When we incrementalise the RHS, it will expect incrementalised values to exist for all the other terms in the expression (x, in this case, although it is not used in
+          -- the expression). In order to make those terms available, we construct replace values for each argument provided as part of the incrementalised_build constructor and assign
+          -- them to the incrementalised name of the argument.
           | ty == vbind_ty = let con = apply_to_name (++ "_build_using_" ++ (show n)) $ incrementalise_name qDcon
                                  acon = Acon con (mutant_tbinds tbinds) (vbinds1 ++ vbinds2) $ 
                                           Let hoist_defn $ 
@@ -100,9 +115,14 @@ mutant_exp (Appt exp ty) = Appt (mutant_exp exp) (mutant_ty ty)
 mutant_exp (Lam (Tb tbind) exp) = Lam (mutant_bind $ Tb tbind) (mutant_exp exp)
 
 -- for \ a -> b, need to check if a is a (incrementalize_type a)_hoist. If so, produce a (incrementalize_type b)_identity.
+--                             if a is a (incrementalize_type a)_replace. If so, produce a (incrementalize_type b)_replace with the result of applying the lambda
 mutant_exp (Lam (Vb vbind) exp) = case type_of_exp exp of
                                     Right param_exp_type -> Lam (Vb newBind) $ Case (Var $ unqual $ fst newBind) vbind (snd newBind) [
-                                                                                 Acon (hoistable_type_reference $ snd vbind) [] [] (Var $ identity_type_reference $ param_exp_type),
+                                                                                 Acon (hoistable_type_reference $ snd vbind) [] [] 
+                                                                                      (Var $ identity_type_reference $ param_exp_type),
+                                                                                 Acon (replacement_type_reference $ snd vbind) [] [(vbind)]
+                                                                                      (App (Var $ replacement_type_reference param_exp_type)
+                                                                                           exp),
                                                                                  Adefault (mutant_exp exp) ]
                                                                                where (Vb newBind) = mutant_bind $ Vb vbind
                                     Left e -> Lam (mutant_bind $ Vb vbind) (mutant_exp exp)
