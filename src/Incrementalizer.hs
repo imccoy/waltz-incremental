@@ -3,6 +3,7 @@ module Incrementalizer (incrementalize, mutant_tbinds) where
 import Control.Monad
 import qualified Data.Data as Data
 import Data.Either
+import Data.List (isSuffixOf)
 import Data.Maybe
 import Debug.Trace
 import IO
@@ -14,13 +15,16 @@ import Zcode
 
 incrementalize = mutant
 
-mutant (Module name tdefs vdefgs) = Module name tdefs' vdefgs'
+mutant (Module (M (P pname, nameids, nameid)) tdefs vdefgs)
+  = Module (M (P $ pname ++ "Prime", nameids, nameid ++ "Prime")) tdefs' vdefgs'
   where tdefs' = tdefs ++ (mutant_tdefs tdefs)
         vdefgs' = vdefgs ++ (mutant_vdefgs vdefgs)
 
 mutant_tdefs = map mutant_tdef
-mutant_tdef (Data qTcon tbinds cdefs) = Data (incrementalise_name qTcon) (tbinds ++ mutant_tbinds tbinds) $ 
-                                             (mutant_cdefs cdefs) ++ (mutant_cdefs_builds qTcon tbinds cdefs) ++ [hoist_cdef qTcon, replacement_cdef qTcon tbinds]
+mutant_tdef tdef@(Data qTcon tbinds cdefs)
+ | "zh" `isSuffixOf` (snd qTcon) = tdef
+ | otherwise = Data (incrementalise_name qTcon) (tbinds ++ mutant_tbinds tbinds) $ 
+                    (mutant_cdefs cdefs) ++ (mutant_cdefs_builds qTcon tbinds cdefs) ++ [hoist_cdef qTcon, replacement_cdef qTcon tbinds]
 mutant_tdef (Newtype qTcon1 qTcon2 tbinds ty) = Newtype (incrementalise_name qTcon1) (incrementalise_name qTcon2) (mutant_tbinds tbinds) (mutant_ty ty)
 
 mutant_cdefs_builds qTcon tbinds cdefs = concat $ map (mutant_cdef_builds qTcon) cdefs
@@ -31,10 +35,14 @@ mutant_tbinds = map mutant_tbind
 mutant_tbind (tvar, kind) = (incrementalise_string tvar, kind)
 
 mutant_cdefs = map mutant_cdef
-mutant_cdef (Constr dcon tbinds tys) = Constr (incrementalise_name dcon) (mutant_tbinds tbinds) (mutant_tys tys)
+mutant_cdef cdef@(Constr dcon tbinds tys)
+  | "zh" `isSuffixOf` (snd dcon) = cdef
+  | otherwise = Constr (incrementalise_name dcon) (mutant_tbinds tbinds) (mutant_tys tys)
 
 hoist_cdef qTcon = Constr (hoistable_type_reference $ Tcon qTcon) [] []
-replacement_cdef qTcon tbinds = Constr (replacement_type_reference $ Tcon qTcon) tbinds [(Tcon qTcon)]
+replacement_cdef qTcon tbinds = Constr (replacement_type_reference $ Tcon qTcon) 
+                                       tbinds
+                                       [(foldl Tapp (Tcon qTcon) (map (Tvar . fst) tbinds))]
 
 mutant_tys = map mutant_ty
 mutant_ty (Tvar tvar) = Tvar $ incrementalise_string tvar
@@ -116,9 +124,17 @@ adjust_type_reference n (Tapp ty1 ty2) = adjust_type_reference n ty1
 adjust_type_reference n other = error $ show $ Data.toConstr other
 
 
-mutant_exp (Var qVar) = Var $ incrementalise_name qVar
-mutant_exp (Dcon qDcon) = Dcon $ incrementalise_name qDcon
-mutant_exp (Lit lit) = Lit lit
+mutant_exp (Var qVar)
+  | "unpackCStringzh" == snd qVar = Var $ replacement_type_reference $ string_ty
+  | otherwise                     = Var $ incrementalise_name qVar
+mutant_exp (Dcon qDcon)
+  | "Czh" == snd qDcon    = Dcon (replacement_type_reference $ char_ty)
+  | otherwise             = Dcon $ incrementalise_name qDcon
+mutant_exp (Lit lit)
+  | ty == addr_prim_ty = Lit lit
+  | ty == char_prim_ty = Lit lit
+  | otherwise          = App (Var $ replacement_type_reference ty) $ Lit lit
+  where ty = literal_ty lit
 mutant_exp (App exp1 exp2) = App (mutant_exp exp1) (mutant_exp exp2)
 mutant_exp (Appt exp ty) = Appt (mutant_exp exp) (mutant_ty ty)
 mutant_exp (Lam (Tb tbind) exp) = Lam (mutant_bind $ Tb tbind) (mutant_exp exp)
@@ -159,6 +175,15 @@ type_of_exp (App exp _)              = type_of_exp exp
 type_of_exp (Cast exp ty)            = Right $ ty
 type_of_exp (Note string exp)        = type_of_exp exp
 type_of_exp exp                      = Left $ "Unknown type of exp" ++ (show $ Data.toConstr exp )  ++ " " ++ show exp
+
+literal_ty (Literal _ t) = t
+string_ty = Tapp (prim_ty "ZMZN") char_ty
+char_ty = prim_ty "Char"
+zmzn_ty = prim_ty "ZMZN"
+prim_ty s = prim_ty_in s "Types"
+prim_ty_in s n = (Tcon (Just $ M (P "ghczmprim", ["GHC"], n), s))
+addr_prim_ty = prim_ty_in "Addrzh" "Prim"
+char_prim_ty = prim_ty_in "Charzh" "Prim"
 
 unsafe_type_of_exp a = case type_of_exp a of
                          Right a -> a

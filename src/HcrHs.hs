@@ -40,7 +40,8 @@ transformed_exp (Core.Dcon dcon) = Hs.HsCon $ simplify $ transformed_name dcon
 transformed_exp (Core.Lit lit) = Hs.HsLit $ transformed_lit lit
 transformed_exp (Core.App exp1 exp2)
   | is_typeclass_specifier exp2        = transformed_exp exp1
-  | is_prim_constructor exp1    = transformed_exp exp2
+  | is_prim_constructor exp1           = transformed_exp exp2
+  | is_prim_fn exp1                    = transformed_exp exp2
   | otherwise                          = Hs.HsParen $ Hs.HsApp (transformed_exp exp1) (transformed_exp exp2) 
 -- transformed_exp (Core.Appt exp ty) = Hs.HsExpTypeSig nowhere (transformed_exp exp) (transformed_ty ty)
 transformed_exp (Core.Lam (Core.Vb (var, _)) exp) = Hs.HsLambda nowhere [Hs.HsPVar $ Hs.HsIdent $ pzdecode var] (transformed_exp exp)
@@ -81,8 +82,11 @@ transformed_lit (Core.Literal (Core.Lrational f) _) = Hs.HsFrac f
 is_typeclass_specifier (Core.Var (_, name)) = take 3 name == "zdf"
 is_typeclass_specifier _ = False
 
-is_prim_constructor (Core.Dcon (Just (Core.M (Core.P name, ["GHC"], "Types")), n)) = (n == "Izh")
+is_prim_constructor (Core.Dcon (Just (Core.M (Core.P name, ["GHC"], "Types")), n)) = n == "Izh" || n == "Czh" || n == "Addrzh"
 is_prim_constructor _                                                              = False
+
+is_prim_fn (Core.Var (Just (Core.M (Core.P name, ["GHC"], "Base")), n))  = (n == "unpackCStringzh")
+is_prim_fn _                                                             = False
 
 mname_name (Core.M ((Core.P name), _, _)) = name
 

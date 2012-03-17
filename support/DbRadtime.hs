@@ -3,10 +3,13 @@
 module DbRadtime where
 
 import Control.Monad
-import Data.Data
+import Control.Monad.IO.Class (liftIO)
 import qualified Data.ByteString.Lazy.Char8 as LB8
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString as B
+import Data.Conduit hiding (sequence)
+import qualified Data.Conduit.List as CL
+import Data.Data
 import qualified Data.Enumerator.List as EL
 import Data.Enumerator (tryIO)
 import Data.List
@@ -263,14 +266,14 @@ instance LoadableState Int where
 
 
 app handle structure parse_request incrementalised_state_function representationFunction request = do
-  request_body_chunks <- EL.consume
+  request_body_chunks <- (requestBody request) $$ CL.consume
   let request_body_query = parseQuery $ B.concat request_body_chunks
   let maybe_input_change = processRequest parse_request request request_body_query
   case maybe_input_change of
     Nothing             -> return ()
     (Just input_change) -> let output_change = incrementalised_state_function input_change
-                            in tryIO $ applyDbInputChange handle structure output_change rootAddress
-  state <- tryIO $ load_state handle structure 1
+                            in liftIO $ applyDbInputChange handle structure output_change rootAddress
+  state <- liftIO $ load_state handle structure 1
   let response = responseLBS
               status200
               [("Content-Type", B8.pack "text/html")]

@@ -8,7 +8,9 @@ import Utils
 
 in_memory_applier = typeclass_instances
 
-typeclass_instances (Module (M (_, _, name)) tdefs vdefgs) = add_imports (Hs.HsModule hs_nowhere (Hs.Module $ name ++ "instances") Nothing [] $ typeclass_instances_tdefs tdefs) [name, "Radtime"]
+typeclass_instances (Module (M (_, _, name)) tdefs vdefgs)
+ = add_imports (Hs.HsModule hs_nowhere (Hs.Module $ name ++ "PrimeInstances") Nothing [] $
+                     typeclass_instances_tdefs tdefs) [name ++ "Prime", "Radtime"]
 
 typeclass_instances_tdefs = map typeclass_instances_tdef
 typeclass_instances_tdef (Data qTcon tbinds cdefs) = Hs.HsInstDecl hs_nowhere context (Hs.UnQual$ Hs.HsIdent "Incrementalised") types [decl]

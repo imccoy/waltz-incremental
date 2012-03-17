@@ -1,4 +1,4 @@
-import B
+import BPrime
 import Radtime
 
 main = do

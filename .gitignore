@@ -8,4 +8,6 @@ demo/Bprime.hs
 demo/Bprime.*instances.hs
 demo/Bprime
 demo/Bprime-web
+demo/Bprime.js
+demo/Radtime.js
 .*.swp
