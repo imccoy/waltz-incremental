@@ -46,6 +46,7 @@ mutant_ty (SymCoercion ty) = SymCoercion (mutant_ty ty)
 mutant_ty (InstCoercion ty1 ty2) = InstCoercion (mutant_ty ty1) (mutant_ty ty2)
 mutant_ty (LeftCoercion ty) = LeftCoercion (mutant_ty ty)
 mutant_ty (RightCoercion ty) = RightCoercion (mutant_ty ty)
+mutant_ty (UnsafeCoercion ty1 ty2) = UnsafeCoercion (mutant_ty ty1) (mutant_ty ty2)
 
 mutant_vdefgs = map mutant_vdefg
 mutant_vdefg (Rec vdefs) = Rec $ map mutant_vdef vdefs
@@ -102,7 +103,7 @@ mutant_alt_lits ty result_ty alts = Acon (replacement_type_reference ty) [] [("r
                                )
 mutant_alt_lit ty result_ty (Alit lit exp)                 = Just $ Alit lit                 (App (Var $ replacement_type_reference $ result_ty) exp)
 mutant_alt_lit ty result_ty (Acon qDcon tbinds vbinds exp) = Just $ Acon qDcon tbinds vbinds (App (Var $ replacement_type_reference $ result_ty) exp)
-mutant_alt_lit ty result_ty (Adefault _)   = Nothing
+mutant_alt_lit ty result_ty (Adefault exp)                 = Just $ Adefault                 (App (Var $ replacement_type_reference $ result_ty) exp)
 
 hoistable_type_reference = adjust_type_reference "hoist"
 identity_type_reference = adjust_type_reference "identity"
