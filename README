@@ -2,14 +2,13 @@ EXPERIMENTAL. PROVISIONAL. NOT READY FOR ACTUAL USE.
 
 FUN AND POSSIBLY MIND-EXPANDING, THOUGH.
 
-There's a little web app in App.hs, in which application state is described
-as a pure function over the events. It should start up and work if you do
-"make web". That's nice and all, but the application state gets recomputed
-from scratch every time the event stream changes. Ideally, we would
-incrementally update applicationState when something is added to the event
-stream. The machinery to do this is under development in rad.hs.
+There's a little web app in App.hs, in which application state is described as
+a pure function over the events. That's nice and all, but the application state
+gets recomputed from scratch every time the event stream changes. Ideally, we
+would incrementally update applicationState when something is added to the
+event stream. The machinery to do this is under development in src/
 
-To see it go, type "make". 
+To see it go, type "cabal build", then "cd demo" and "make". 
 
 You may want some dependencies:
   cabal install extcore haskell-src # for the machinery
@@ -24,7 +23,7 @@ Here's how everything fits together:
 
  B.hcr
 
-   |   ./rad reads the core, and adds incrementalised versions of it's
+   |   ./Incrementalizer reads the core, and adds incrementalised versions of it's
   \ /  functions
 
 Bprime.hcr
