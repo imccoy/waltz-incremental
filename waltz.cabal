@@ -6,31 +6,7 @@ Author:         Iain McCoy
 Synopsis:       The deranged blatherings of a madman
 Build-Type:     Simple
 
-Executable incr
+Executable Incrementaliser
   Hs-Source-Dirs: src
-  Main-Is:        incr.hs
-  build-depends:  base, shelly, text, system-filepath
-
-Executable Incrementalizer
-  Hs-Source-Dirs: src
-  Main-Is:        IncrementalizerMain.hs
-  Other-Modules:  Incrementalizer Utils
-  build-depends:  base, haskell98, extcore
-
-Executable hcr2hs
-  Hs-Source-Dirs: src
-  Main-Is:        hcr2hs.hs
-  Other-Modules:  Utils HcrHs
-  build-depends:  base, haskell98, haskell-src, extcore
-
-Executable DatabaseApplier
-  Hs-Source-Dirs: src
-  Main-Is:        DatabaseApplierMain.hs
-  Other-Modules:  Incrementalizer Utils DatabaseApplier
-  build-depends:  base, haskell98, haskell-src, extcore
-
-Executable InMemoryApplier
-  Hs-Source-Dirs: src
-  Main-Is:        InMemoryApplierMain.hs
-  Other-Modules:  Incrementalizer Utils InMemoryApplier
-  build-depends:  base, haskell98, haskell-src, extcore
+  Main-Is: Main.hs
+  build-depends:  base, ghc, ghc-paths, directory

@@ -1,16 +1,170 @@
-module Incrementalizer (incrementalize, mutant_tbinds) where
+{-# LANGUAGE ViewPatterns #-}
+
+module Main where
 
 import Control.Monad
 import qualified Data.Data as Data
 import Data.Either
 import Data.Maybe
 import Debug.Trace
-import IO
+import System.Directory (removeFile)
+import System.IO
+import System.Environment (getArgs)
+import System.Exit
 
-import Language.Core.Core
+import Outputable
 
+import BasicTypes 
+import GHC.Paths ( libdir )
+import CoreSyn
+import DataCon
+import FastString ( uniqueOfFS )
+import HscTypes
+import HscMain
+import HsDecls
+import HsPat
+import IdInfo
+import MkExternalCore
+import MonadUtils
+import Name hiding (varName)
+import NameEnv
+import OccName hiding (varName)
+import RdrName
+import Var
+import Type
+import TyCon
+import Unique
+
+import DynFlags
+
+import GHC
+
+mutantCoreModule dm = dm { dm_core_module = mutantModGuts (dm_core_module dm) }
+mutantModGuts mg = mg { mg_binds = mutantCoreBinds (mg_binds mg)
+                      , mg_types = mutantTypeEnv (mg_types mg)
+                      }
+
+mutantCoreBinds binds = binds ++ (map mutantCoreBind binds)
+
+map2 :: (a -> c) -> (b -> d) -> [(a, b)] -> [(c, d)]
+map2 f g = map (\(a, b) -> (f a, g b))
+
+mutantCoreBind :: CoreBind -> CoreBind
+mutantCoreBind corebind@(NonRec name exp) 
+  = NonRec (mutantCoreBndr name) (mutantExp exp)
+mutantCoreBind corebinds@(Rec name_exps)
+  = Rec $ map2 mutantCoreBndr mutantExp name_exps
+
+mutantCoreBndr :: CoreBndr -> CoreBndr
+mutantCoreBndr = mutantId
+
+mutantId var = mk (idDetails var) var' type_' vanillaIdInfo
+  where var' = (mutantName $ varName var)
+        type_' = (mutantType $ varType var)
+        mk | isGlobalId var = mkGlobalVar
+           | isLocalVar var = mkLocalVar
+
+mutantName oldName = mkSystemName unique occName 
+  where oldNameString = occNameString $ nameOccName $ oldName
+        nameString = oldNameString ++ "_incrementalised"
+        occName = mkOccName (occNameSpace $ nameOccName oldName) nameString
+        unique = getUnique occName
+
+
+mutantExp (Var id) = Var $ mutantCoreBndr id
+mutantExp (Lit lit) = Lit lit
+mutantExp (App expr arg) = App (mutantExp expr) (mutantExp arg)
+mutantExp (Lam id expr) = Lam (mutantCoreBndr id) (mutantExp expr)
+mutantExp (Let bind expr) = Let (mutantCoreBind bind) (mutantExp expr)
+mutantExp (Case expr id type_ alts) = Case (mutantExp expr)
+                                           (mutantCoreBndr id)
+                                           (mutantType type_)
+                                           alts
+mutantExp (Cast expr coercion) = Cast (mutantExp expr) coercion
+mutantExp (Type type_) = Type (mutantType type_)
+mutantExp (Note note expr) = Note note (mutantExp expr)
+
+mutantTypeEnv env = extendTypeEnvList env (map mutantTyThing $ typeEnvElts env)
+mutantTyThing (AnId id) = AnId $ mutantId id
+mutantTyThing (ADataCon con) = ADataCon $ mutantDataCon con
+mutantTyThing (ATyCon con) = ATyCon $ mutantTyCon con
+mutantTyThing (AClass cls) = AClass $ mutantClass cls
+
+mutantType (getTyVar_maybe -> Just tyVar) = mkTyVarTy $ mutantTyVar tyVar
+mutantType (splitAppTy_maybe -> Just (a, b))
+  = mkAppTy (mutantType a) (mutantType b)
+mutantType (splitFunTy_maybe -> Just (a, b))
+  = mkFunTy (mutantType a) (mutantType b)
+mutantType (splitTyConApp_maybe -> Just (con, tys))
+  = mkTyConApp (mutantTyCon con) (tys ++ map mutantType tys)
+mutantType (splitForAllTy_maybe -> Just (tyVar, ty))
+  = mkForAllTy (mutantTyVar tyVar) (mutantType ty)
+
+mutantTyVar = mutantId
+
+mutantTyCon tyCon
+ | isAlgTyCon tyCon      = mutantAlgTyCon
+ | isAbstractTyCon tyCon = makeTyConAbstract $ mutantAlgTyCon
+ | isClassTyCon tyCon    = mutantClassTyCon
+ | isFunTyCon tyCon      = mutantFunTyCon
+ | isPrimTyCon tyCon     = tyCon
+ | otherwise = trace ("Don't know how to mutate tyCon " ++ con) tyCon
+ where
+   con = (showSDoc.ppr.getName$tyCon) ++ " :: " ++ (showSDoc.ppr$tyCon)
+
+   mutantClassTyCon = mkClassTyCon name kind tyvars rhs cls isRec
+   mutantAlgTyCon = mkAlgTyCon name kind tyvars predTys rhs parent 
+                               isRec hasGen declaredGadt
+   mutantFunTyCon =mkFunTyCon (mutantName $ getName tyCon) (tyConKind tyCon)
+
+   name = mutantName $ getName tyCon
+   tyvars = map mutantTyVar $ tyConTyVars tyCon
+   rhs = mutantAlgTyConRhs $ algTyConRhs tyCon
+   cls = mutantClass (fromJust $ tyConClass_maybe tyCon)
+   kind = tyConKind tyCon
+   isRec = boolToRecFlag $ isRecursiveTyCon tyCon
+   predTys = tyConStupidTheta tyCon -- can we incrementalise constraints?
+   parent = tyConParent tyCon
+   hasGen = tyConHasGenerics tyCon
+   declaredGadt = isGadtSyntaxTyCon tyCon
+
+mutantAlgTyConRhs (DataTyCon dataCons isEnum)
+  = DataTyCon (map mutantDataCon dataCons)
+              isEnum
+mutantAlgTyConRhs (NewTyCon dataCon rhs etadRhs co)
+  = NewTyCon (mutantDataCon dataCon)
+             (mutantType rhs)
+             (mutantEtadType etadRhs)
+             (fmap mutantTyCon co)
+mutantAlgTyConRhs AbstractTyCon
+  = AbstractTyCon
+mutantAlgTyConRhs DataFamilyTyCon
+  = DataFamilyTyCon
+
+mutantDataCon dataCon = mkDataCon 
+  (mutantName $ dataConName dataCon)
+  (dataConIsInfix dataCon)
+  (dataConStrictMarks dataCon)
+  (map mutantName $ dataConFieldLabels dataCon)
+  (map mutantTyVar $ dataConUnivTyVars dataCon)
+  (map mutantTyVar $ dataConExTyVars dataCon)
+  (map2 mutantTyVar mutantType $ dataConEqSpec dataCon)
+  (dataConDictTheta dataCon) -- dataConTheta on GHC 7.4?
+  (map mutantType $ dataConOrigArgTys dataCon)
+  (mutantType $ dataConOrigResTy dataCon)
+  (mutantTyCon $ dataConTyCon dataCon)
+  (dataConStupidTheta dataCon)
+  (DCIds (fmap mutantId $ dataConWrapId_maybe dataCon)
+         (mutantId $ dataConWorkId dataCon))
+
+
+mutantEtadType (tyVars, type_) = (map mutantTyVar tyVars, mutantType type_)
+
+mutantClass = id
+
+
+{-
 import Utils
-import Zcode
 
 incrementalize = mutant
 
@@ -165,4 +319,37 @@ unsafe_type_of_exp a = case type_of_exp a of
                          Left e -> error e
 
 
+-}
+
+process targetFile = do
+  defaultErrorHandler defaultDynFlags $ do
+    runGhc (Just libdir) $ do
+      dflags <- getSessionDynFlags
+      let dflags' = dopt_set (foldl xopt_set dflags
+                                    [Opt_Cpp, Opt_ImplicitPrelude, Opt_MagicHash])
+                             Opt_EmitExternalCore
+      setSessionDynFlags dflags'
+      target <- guessTarget targetFile Nothing
+      setTargets [target]
+      load LoadAllTargets
+      modSum <- getModSummary $ mkModuleName targetFile
+      p <- parseModule modSum
+      t <- typecheckModule p
+      d <- desugarModule t
+      let d' = mutantCoreModule d
+      liftIO $ do
+        putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d
+
+      setSessionDynFlags $ dflags' { hscOutName = targetFile ++ ".o", extCoreName = targetFile ++ ".hcr" }
+      (hscGenOutput hscOneShotCompiler) (dm_core_module d') modSum Nothing
+      return ()
+ 
+
+main = do
+  args <- getArgs
+  when (length args /= 1) $ do
+    putStrLn $ "Usage: Incrementalizer <from.hs>"
+    exitFailure
+  let (from:[]) = args
+  process from
 
