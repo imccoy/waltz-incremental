@@ -64,7 +64,12 @@ mutantId var = mk (idDetails var) var' type_' vanillaIdInfo
         mk | isGlobalId var = mkGlobalVar
            | isLocalVar var = mkLocalVar
 
-mutantName oldName = mkSystemName unique occName 
+mutantName oldName
+  | isInternalName oldName = mkInternalName unique occName (nameSrcSpan oldName)
+  | isExternalName oldName = mkExternalName unique (nameModule oldName)
+                                            occName (nameSrcSpan oldName)
+  | isWiredInName oldName  = mkSystemName unique occName 
+  | otherwise              = mkSystemName unique occName 
   where oldNameString = occNameString $ nameOccName $ oldName
         nameString = oldNameString ++ "_incrementalised"
         occName = mkOccName (occNameSpace $ nameOccName oldName) nameString
@@ -96,7 +101,7 @@ mutantType (splitAppTy_maybe -> Just (a, b))
 mutantType (splitFunTy_maybe -> Just (a, b))
   = mkFunTy (mutantType a) (mutantType b)
 mutantType (splitTyConApp_maybe -> Just (con, tys))
-  = mkTyConApp (mutantTyCon con) (tys ++ map mutantType tys)
+  = mkTyConApp (mutantTyCon con) (map mutantType tys)
 mutantType (splitForAllTy_maybe -> Just (tyVar, ty))
   = mkForAllTy (mutantTyVar tyVar) (mutantType ty)
 
