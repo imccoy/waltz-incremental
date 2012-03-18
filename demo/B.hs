@@ -1,4 +1,5 @@
 module B where
+import Radtime
 
 data TryList a = EmptyTryList | ConsTryList a (TryList a)
 

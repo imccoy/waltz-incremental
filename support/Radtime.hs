@@ -45,30 +45,30 @@ instance Incrementalised Int_incrementalised Int where
   applyInputChange c _ = error $ "no applyInputChange for " ++ (show c)
 
 -- data ZMZN a = ZC a (ZMZN a) | []
-data ZMZN_incrementalised a a_incrementalised = ZC_incrementalised
+data BuiltinList_incrementalised a a_incrementalised = ZC_incrementalised
                                                    a_incrementalised 
-                                                   (ZMZN_incrementalised a a_incrementalised)
+                                                   (BuiltinList_incrementalised a a_incrementalised)
                                               | ZC_incrementalised_build_using_1 a
                                               | ZC_incrementalised_build_using_0 [a]
-                                              | ZMZN_incrementalised_identity -- that's ZMZN the type of lists, not ZMZN the empty list
-                                              | ZMZN_incrementalised_replace [a] -- replace the whole list with the specified value
-                                              | ZMZN_incrementalised_hoist
-                                              | ZMZN_incrementalised -- empty list constructor
+                                              | BuiltinList_incrementalised_identity -- that's ZMZN the type of lists, not ZMZN the empty list
+                                              | BuiltinList_incrementalised_replace [a] -- replace the whole list with the specified value
+                                              | BuiltinList_incrementalised_hoist
+                                              | BuiltinList_incrementalised -- empty list constructor
 
 instance (Incrementalised elem_incrementalised elem) => 
-            Incrementalised (ZMZN_incrementalised elem elem_incrementalised) ([elem]) where
+            Incrementalised (BuiltinList_incrementalised elem elem_incrementalised) ([elem]) where
   applyInputChange (ZC_incrementalised hchange tchange) (h:t) = (applyInputChange hchange h):(applyInputChange tchange t)
   applyInputChange (ZC_incrementalised_build_using_1 a) as = a:as
   applyInputChange (ZC_incrementalised_build_using_0 as) a = a ++ as -- dubious, at best
-  applyInputChange (ZMZN_incrementalised_replace n) _ = n
-  applyInputChange (ZMZN_incrementalised_identity) m = m
+  applyInputChange (BuiltinList_incrementalised_replace n) _ = n
+  applyInputChange (BuiltinList_incrementalised_identity) m = m
 
-head_incrementalised (ZC_incrementalised_build_using_1 new_head) = ZMZN_incrementalised_replace new_head
+head_incrementalised (ZC_incrementalised_build_using_1 new_head) = BuiltinList_incrementalised_replace new_head
 head_incrementalised _ = error "can't do incrementalised head"
---head_incrementalised (ZC_incrementalised_build_using_1 new_head :: ZMZN_incrementalised [a] (ZMZN_incrementalised a a_incrementalised)) = ZMZN_incrementalised_replace new_head :: a_incrementalised
+--head_incrementalised (ZC_incrementalised_build_using_1 new_head :: BuiltinList_incrementalised [a] (BuiltinList_incrementalised a a_incrementalised)) = BuiltinList_incrementalised_replace new_head :: a_incrementalised
 --head_incrementalised _ = error "can't do incrementalised head"
 
-length_incrementalised (ZMZN_incrementalised_replace a) = Int_incrementalised_replace $ length a
+length_incrementalised (BuiltinList_incrementalised_replace a) = Int_incrementalised_replace $ length a
 length_incrementalised _ = error "can't do incrementalised length"
 
 app parse_request state incrementalised_state_function representationFunction request = do

@@ -25,6 +25,7 @@ import HsDecls
 import HsPat
 import IdInfo
 import MkExternalCore
+import Module
 import MonadUtils
 import Name hiding (varName)
 import NameEnv
@@ -39,12 +40,19 @@ import DynFlags
 
 import GHC
 
-mutantCoreModule dm = dm { dm_core_module = mutantModGuts (dm_core_module dm) }
-mutantModGuts mg = mg { mg_binds = mutantCoreBinds (mg_binds mg)
-                      , mg_types = mutantTypeEnv (mg_types mg)
-                      }
+mutantCoreModule mod dm = dm { dm_core_module = mutantModGuts mod (dm_core_module dm) }
+mutantModGuts mod mg = mg { mg_binds = mutantCoreBinds (mg_binds mg)
+                          , mg_types = mutantTypeEnv (mg_types mg)
+                          , mg_dir_imps  = mutantDeps (mg_dir_imps mg) mod
+                          }
+
+mutantDeps imps mod = extendModuleEnv imps mod [(mkModuleName "Radtime", False, noSrcSpan)]
 
 mutantCoreBinds binds = binds ++ (map mutantCoreBind binds)
+
+interlace :: [a] -> [a] -> [a]
+interlace [] [] = []
+interlace (a:as) (b:bs) = a:b:(interlace as bs)
 
 map2 :: (a -> c) -> (b -> d) -> [(a, b)] -> [(c, d)]
 map2 f g = map (\(a, b) -> (f a, g b))
@@ -66,14 +74,18 @@ mutantId var = mk (idDetails var) var' type_' vanillaIdInfo
 
 mutantName oldName
   | isInternalName oldName = mkInternalName unique occName (nameSrcSpan oldName)
-  | isExternalName oldName = mkExternalName unique (nameModule oldName)
+  | isExternalName oldName = mkExternalName unique (adaptModule $ nameModule oldName)
                                             occName (nameSrcSpan oldName)
   | isWiredInName oldName  = mkSystemName unique occName 
   | otherwise              = mkSystemName unique occName 
   where oldNameString = occNameString $ nameOccName $ oldName
-        nameString = oldNameString ++ "_incrementalised"
+        nameString | oldNameString == "[]" = "BuiltinList_incrementalised"
+                   | otherwise             = oldNameString ++ "_incrementalised"
         occName = mkOccName (occNameSpace $ nameOccName oldName) nameString
         unique = getUnique occName
+        adaptModule mod | modulePackageId mod == primPackageId = radtime
+                        | otherwise                            = mod
+        radtime = mkModule mainPackageId (mkModuleName "Radtime") 
 
 
 mutantExp (Var id) = Var $ mutantCoreBndr id
@@ -95,15 +107,21 @@ mutantTyThing (ADataCon con) = ADataCon $ mutantDataCon con
 mutantTyThing (ATyCon con) = ATyCon $ mutantTyCon con
 mutantTyThing (AClass cls) = AClass $ mutantClass cls
 
-mutantType (getTyVar_maybe -> Just tyVar) = mkTyVarTy $ mutantTyVar tyVar
+mutantType (getTyVar_maybe -> Just tyVar)
+  = mkTyVarTy $ mutantTyVar tyVar
 mutantType (splitAppTy_maybe -> Just (a, b))
-  = mkAppTy (mutantType a) (mutantType b)
+  = mkAppTy (mkAppTy (mutantType a) b)
+            (mutantType b)
+
 mutantType (splitFunTy_maybe -> Just (a, b))
   = mkFunTy (mutantType a) (mutantType b)
+
 mutantType (splitTyConApp_maybe -> Just (con, tys))
   = mkTyConApp (mutantTyCon con) (map mutantType tys)
+
 mutantType (splitForAllTy_maybe -> Just (tyVar, ty))
   = mkForAllTy (mutantTyVar tyVar) (mutantType ty)
+
 
 mutantTyVar = mutantId
 
@@ -123,7 +141,8 @@ mutantTyCon tyCon
    mutantFunTyCon =mkFunTyCon (mutantName $ getName tyCon) (tyConKind tyCon)
 
    name = mutantName $ getName tyCon
-   tyvars = map mutantTyVar $ tyConTyVars tyCon
+   tyvars = interlace (tyConTyVars tyCon)
+                      (map mutantTyVar $ tyConTyVars tyCon)
    rhs = mutantAlgTyConRhs $ algTyConRhs tyCon
    cls = mutantClass (fromJust $ tyConClass_maybe tyCon)
    kind = tyConKind tyCon
@@ -331,7 +350,9 @@ process targetFile = do
     runGhc (Just libdir) $ do
       dflags <- getSessionDynFlags
       let dflags' = dopt_set (foldl xopt_set dflags
-                                    [Opt_Cpp, Opt_ImplicitPrelude, Opt_MagicHash])
+                                    [ Opt_Cpp
+                                    , Opt_ImplicitPrelude
+                                    , Opt_MagicHash])
                              Opt_EmitExternalCore
       setSessionDynFlags dflags'
       target <- guessTarget targetFile Nothing
@@ -341,11 +362,13 @@ process targetFile = do
       p <- parseModule modSum
       t <- typecheckModule p
       d <- desugarModule t
-      let d' = mutantCoreModule d
+      let d' = mutantCoreModule (ms_mod modSum) d
       liftIO $ do
         putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d
 
-      setSessionDynFlags $ dflags' { hscOutName = targetFile ++ ".o", extCoreName = targetFile ++ ".hcr" }
+      setSessionDynFlags $ dflags' { hscOutName = targetFile ++ ".o"
+                                   , extCoreName = targetFile ++ ".hcr"
+                                   }
       (hscGenOutput hscOneShotCompiler) (dm_core_module d') modSum Nothing
       return ()
  
