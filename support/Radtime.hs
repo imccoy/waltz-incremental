@@ -16,22 +16,27 @@ import Text.Blaze.Renderer.Utf8 (renderHtml)
 class Incrementalised incrementalised base where 
   applyInputChange  :: incrementalised -> base -> base
 
-data Char_incrementalised = Char_incrementalised_hoist
-                          | Char_incrementalised_replace Char
-                          | Char_incrementalised_identity
+data Char_incrementalised = Char_hoist
+                          | Char_replace Char
+                          | Char_identity
+  deriving Show
+
+data Bool_incrementalised = Bool_hoist
+                          | Bool_replace Bool
+                          | Bool_identity
   deriving Show
 
 instance Incrementalised Char_incrementalised Char where
-  applyInputChange (Char_incrementalised_replace n) _ = n
-  applyInputChange (Char_incrementalised_identity) m = m
+  applyInputChange (Char_replace n) _ = n
+  applyInputChange (Char_identity) m = m
   applyInputChange c _ = error $ "no applyInputChange for " ++ (show c)
 
 
 data Int_incrementalised = Int_incrementalised_add Int_incrementalised Int_incrementalised
                          | Int_incrementalised_multiply Int_incrementalised Int_incrementalised
-                         | Int_incrementalised_identity
-                         | Int_incrementalised_replace Int
-                         | Int_incrementalised_hoist
+                         | Int_identity
+                         | Int_replace Int
+                         | Int_hoist
   deriving (Show)
 
 zdfNumInt_incrementalised = undefined -- will be passed to zp_incrementalised, which will ignore it
@@ -40,8 +45,8 @@ zp_incrementalised _ a b = Int_incrementalised_add a b
 
 instance Incrementalised Int_incrementalised Int where
   applyInputChange (Int_incrementalised_add a b) m = (applyInputChange a m) + (applyInputChange b m)
-  applyInputChange (Int_incrementalised_replace n) _ = n
-  applyInputChange (Int_incrementalised_identity) m = m
+  applyInputChange (Int_replace n) _ = n
+  applyInputChange (Int_identity) m = m
   applyInputChange c _ = error $ "no applyInputChange for " ++ (show c)
 
 -- data ZMZN a = ZC a (ZMZN a) | []
@@ -50,9 +55,9 @@ data BuiltinList_incrementalised a a_incrementalised = ZC_incrementalised
                                                    (BuiltinList_incrementalised a a_incrementalised)
                                               | ZC_incrementalised_build_using_1 a
                                               | ZC_incrementalised_build_using_0 [a]
-                                              | BuiltinList_incrementalised_identity -- that's ZMZN the type of lists, not ZMZN the empty list
-                                              | BuiltinList_incrementalised_replace [a] -- replace the whole list with the specified value
-                                              | BuiltinList_incrementalised_hoist
+                                              | BuiltinList_identity -- that's ZMZN the type of lists, not ZMZN the empty list
+                                              | BuiltinList_replace [a] -- replace the whole list with the specified value
+                                              | BuiltinList_hoist
                                               | BuiltinList_incrementalised -- empty list constructor
 
 instance (Incrementalised elem_incrementalised elem) => 
@@ -60,15 +65,15 @@ instance (Incrementalised elem_incrementalised elem) =>
   applyInputChange (ZC_incrementalised hchange tchange) (h:t) = (applyInputChange hchange h):(applyInputChange tchange t)
   applyInputChange (ZC_incrementalised_build_using_1 a) as = a:as
   applyInputChange (ZC_incrementalised_build_using_0 as) a = a ++ as -- dubious, at best
-  applyInputChange (BuiltinList_incrementalised_replace n) _ = n
-  applyInputChange (BuiltinList_incrementalised_identity) m = m
+  applyInputChange (BuiltinList_replace n) _ = n
+  applyInputChange (BuiltinList_identity) m = m
 
-head_incrementalised (ZC_incrementalised_build_using_1 new_head) = BuiltinList_incrementalised_replace new_head
+head_incrementalised (ZC_incrementalised_build_using_1 new_head) = BuiltinList_replace new_head
 head_incrementalised _ = error "can't do incrementalised head"
 --head_incrementalised (ZC_incrementalised_build_using_1 new_head :: BuiltinList_incrementalised [a] (BuiltinList_incrementalised a a_incrementalised)) = BuiltinList_incrementalised_replace new_head :: a_incrementalised
 --head_incrementalised _ = error "can't do incrementalised head"
 
-length_incrementalised (BuiltinList_incrementalised_replace a) = Int_incrementalised_replace $ length a
+length_incrementalised (BuiltinList_replace a) = Int_replace $ length a
 length_incrementalised _ = error "can't do incrementalised length"
 
 app parse_request state incrementalised_state_function representationFunction request = do

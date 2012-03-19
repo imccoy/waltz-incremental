@@ -5,6 +5,7 @@ module Main where
 import Control.Monad
 import qualified Data.Data as Data
 import Data.Either
+import qualified Data.List as List
 import Data.Maybe
 import Debug.Trace
 import System.Directory (removeFile)
@@ -14,16 +15,20 @@ import System.Exit
 
 import Outputable
 
+import Bag
 import BasicTypes 
 import GHC.Paths ( libdir )
+import CoreLint
 import CoreSyn
 import DataCon
+import ErrUtils
 import FastString ( uniqueOfFS )
-import HscTypes
+import HscTypes hiding (lookupDataCon)
 import HscMain
 import HsDecls
 import HsPat
 import IdInfo
+import Literal
 import MkId
 import Module
 import MonadUtils
@@ -39,7 +44,7 @@ import Unique
 
 import DynFlags
 
-import GHC
+import GHC hiding (exprType)
 
 mutantCoreModule mod dm = dm { dm_core_module = mutantModGuts mod (dm_core_module dm) }
 mutantModGuts mod mg = mg { mg_binds = mutantCoreBinds (mg_binds mg)
@@ -73,6 +78,7 @@ mutantId var = mk (idDetails var) var' type_' vanillaIdInfo
         mk | isGlobalId var = mkGlobalVar
            | isLocalVar var = mkLocalVar
 
+mutantNameIntoSpace :: Name -> NameSpace -> String -> Name
 mutantNameIntoSpace oldName nameSpace suffix
   | isInternalName oldName = mkInternalName unique occName (nameSrcSpan oldName)
   | isExternalName oldName = mkExternalName unique (adaptModule $ nameModule oldName)
@@ -96,7 +102,24 @@ mutantName oldName = mutantNameIntoSpace oldName
 mutantExp (Var id) = Var $ mutantCoreBndr id
 mutantExp (Lit lit) = Lit lit
 mutantExp (App expr arg) = App (mutantExp expr) (mutantExp arg)
-mutantExp (Lam id expr) = Lam (mutantCoreBndr id) (mutantExp expr)
+-- for \ a -> b, need to check if a is a (incrementalize_type a)_hoist. 
+-- If so, produce a (incrementalize_type b)_identity.
+mutantExp (Lam id expr) = Lam (mutantCoreBndr id) expr'
+  where expr' | isTyVar id = mutantExp expr
+              | otherwise  = Case (Var $ mutantCoreBndr id) 
+                                  (mutantCoreBndr id) 
+                                  oType
+                                  [hoist, def]
+        def = (DEFAULT, [], mutantExp expr)
+        hoist = (DataAlt $ lookupDataCon iType AddConHoist
+                ,[]
+                ,Var var)
+        iType = mutantType $ varType id
+        oType = mutantType $ exprType expr
+        oConName = (dataConName $ lookupDataCon oType AddConHoist)
+        var = mkLocalVar VanillaId oConName oType vanillaIdInfo
+
+
 mutantExp (Let bind expr) = Let (mutantCoreBind bind) (mutantExp expr)
 mutantExp (Case expr id type_ alts) = Case (mutantExp expr)
                                            (mutantCoreBndr id)
@@ -150,12 +173,20 @@ mutantTyCon tyCon = newTyCon
                      (map mutantTyVar $ tyConTyVars tyCon)
   rhs = mutantAlgTyConRhs tyCon newTyCon $ algTyConRhs tyCon
   cls = mutantClass (fromJust $ tyConClass_maybe tyCon)
-  kind = tyConKind tyCon
+  kind = duplicateKindArgs $ tyConKind tyCon
   isRec = boolToRecFlag $ isRecursiveTyCon tyCon
   predTys = tyConStupidTheta tyCon -- can we incrementalise constraints?
   parent = tyConParent tyCon
   hasGen = tyConHasGenerics tyCon
   declaredGadt = isGadtSyntaxTyCon tyCon
+
+duplicateKindArgs (splitTyConApp_maybe -> Just (tyCon, []))
+  = mkTyConApp tyCon [] 
+duplicateKindArgs kind@(splitTyConApp_maybe -> Just (tyCon, types))
+  = foldr mkFunTy kind types -- what is this I don't even
+duplicateKindArgs (splitFunTy_maybe -> Just (arg, res))
+  = mkFunTy arg res
+duplicateKindArgs args = args
 
 mutantAlgTyConRhs tyCon newTyCon (DataTyCon dataCons isEnum)
   = DataTyCon ((map mutantDataCon dataCons) ++ 
@@ -250,6 +281,25 @@ mutantEtadType (tyVars, type_) = (map mutantTyVar tyVars, mutantType type_)
 
 mutantClass = id
 
+exprType (Var id) = varType id
+exprType (Lit lit) = literalType lit
+exprType (App expr arg) = mkAppTy (exprType expr) (exprType arg)
+exprType (Lam id expr) = exprType expr
+exprType (Let bind expr) = exprType expr
+exprType (Case expr id type_ alts) = type_
+exprType (Cast expr coercion) = coercion
+exprType (Type type_) = type_
+exprType (Note note expr) = exprType expr
+
+lookupDataCon type_ additionalCon
+  = let tyCon = tyConAppTyCon type_
+        cons | isAlgTyCon tyCon = data_cons $ algTyConRhs tyCon
+             | otherwise = error $ "not an alg ty con" ++
+                                   (showSDoc $ ppr tyCon)
+        suffix = additionalConSuffix additionalCon
+        nameString c = occNameString $ nameOccName $ dataConName c
+        matchingCon c = List.isSuffixOf suffix (nameString c)
+     in head $ filter matchingCon cons
 
 {-
 import Utils
@@ -365,6 +415,7 @@ mutant_exp (App exp1 exp2) = App (mutant_exp exp1) (mutant_exp exp2)
 mutant_exp (Appt exp ty) = Appt (mutant_exp exp) (mutant_ty ty)
 mutant_exp (Lam (Tb tbind) exp) = Lam (mutant_bind $ Tb tbind) (mutant_exp exp)
 
+
 -- for \ a -> b, need to check if a is a (incrementalize_type a)_hoist. If so, produce a (incrementalize_type b)_identity.
 mutant_exp (Lam (Vb vbind) exp) = case type_of_exp exp of
                                     Right param_exp_type -> Lam (Vb newBind) $ Case (Var $ unqual $ fst newBind) vbind (snd newBind) [
@@ -428,14 +479,22 @@ process targetFile = do
       d <- desugarModule t
       let d' = mutantCoreModule (ms_mod modSum) d
       liftIO $ do
-        putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d
+        lintPrintAndFail d'
+        putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d'
 
       setSessionDynFlags $ dflags' { hscOutName = targetFile ++ ".o"
                                    , extCoreName = targetFile ++ ".hcr"
                                    }
       (hscGenOutput hscOneShotCompiler) (dm_core_module d') modSum Nothing
       return ()
- 
+
+lintPrintAndFail desugaredModule = do 
+  let bindings = mg_binds $ dm_core_module desugaredModule
+  let (errors, warnings) = lintCoreBindings bindings
+  when ((not $ isEmptyBag errors) || (not $ isEmptyBag warnings)) $ do
+    putStrLn $ showSDoc $ pprMessageBag errors
+    putStrLn $ showSDoc $ pprMessageBag warnings
+    exitFailure
 
 main = do
   args <- getArgs
