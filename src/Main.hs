@@ -24,12 +24,13 @@ import HscMain
 import HsDecls
 import HsPat
 import IdInfo
-import MkExternalCore
+import MkId
 import Module
 import MonadUtils
 import Name hiding (varName)
 import NameEnv
 import OccName hiding (varName)
+import qualified OccName as OccName
 import RdrName
 import Var
 import Type
@@ -72,21 +73,25 @@ mutantId var = mk (idDetails var) var' type_' vanillaIdInfo
         mk | isGlobalId var = mkGlobalVar
            | isLocalVar var = mkLocalVar
 
-mutantName oldName
+mutantNameIntoSpace oldName nameSpace suffix
   | isInternalName oldName = mkInternalName unique occName (nameSrcSpan oldName)
   | isExternalName oldName = mkExternalName unique (adaptModule $ nameModule oldName)
                                             occName (nameSrcSpan oldName)
   | isWiredInName oldName  = mkSystemName unique occName 
   | otherwise              = mkSystemName unique occName 
   where oldNameString = occNameString $ nameOccName $ oldName
-        nameString | oldNameString == "[]" = "BuiltinList_incrementalised"
-                   | otherwise             = oldNameString ++ "_incrementalised"
-        occName = mkOccName (occNameSpace $ nameOccName oldName) nameString
+        nameString | oldNameString == "[]" = "BuiltinList_" ++ suffix
+                   | otherwise             = oldNameString ++ "_" ++ suffix
+        occName = mkOccName nameSpace nameString
         unique = getUnique occName
         adaptModule mod | modulePackageId mod == primPackageId = radtime
                         | otherwise                            = mod
         radtime = mkModule mainPackageId (mkModuleName "Radtime") 
 
+
+mutantName oldName = mutantNameIntoSpace oldName
+                                         (occNameSpace $ nameOccName oldName)
+                                         "incrementalised"
 
 mutantExp (Var id) = Var $ mutantCoreBndr id
 mutantExp (Lit lit) = Lit lit
@@ -125,44 +130,45 @@ mutantType (splitForAllTy_maybe -> Just (tyVar, ty))
 
 mutantTyVar = mutantId
 
-mutantTyCon tyCon
- | isAlgTyCon tyCon      = mutantAlgTyCon
- | isAbstractTyCon tyCon = makeTyConAbstract $ mutantAlgTyCon
- | isClassTyCon tyCon    = mutantClassTyCon
- | isFunTyCon tyCon      = mutantFunTyCon
- | isPrimTyCon tyCon     = tyCon
- | otherwise = trace ("Don't know how to mutate tyCon " ++ con) tyCon
+mutantTyCon tyCon = newTyCon
  where
-   con = (showSDoc.ppr.getName$tyCon) ++ " :: " ++ (showSDoc.ppr$tyCon)
+  newTyCon | isAlgTyCon tyCon      = mutantAlgTyCon
+           | isAbstractTyCon tyCon = makeTyConAbstract $ mutantAlgTyCon
+           | isClassTyCon tyCon    = mutantClassTyCon
+           | isFunTyCon tyCon      = mutantFunTyCon
+           | isPrimTyCon tyCon     = tyCon
+           | otherwise = trace ("Don't know how to mutate tyCon " ++ showCon) tyCon
+  showCon = (showSDoc.ppr.getName$tyCon) ++ " :: " ++ (showSDoc.ppr$tyCon)
 
-   mutantClassTyCon = mkClassTyCon name kind tyvars rhs cls isRec
-   mutantAlgTyCon = mkAlgTyCon name kind tyvars predTys rhs parent 
-                               isRec hasGen declaredGadt
-   mutantFunTyCon =mkFunTyCon (mutantName $ getName tyCon) (tyConKind tyCon)
+  mutantClassTyCon = mkClassTyCon name kind tyvars rhs cls isRec
+  mutantAlgTyCon = mkAlgTyCon name kind tyvars predTys rhs parent 
+                              isRec hasGen declaredGadt
+  mutantFunTyCon = mkFunTyCon (mutantName $ getName tyCon) (tyConKind tyCon)
 
-   name = mutantName $ getName tyCon
-   tyvars = interlace (tyConTyVars tyCon)
-                      (map mutantTyVar $ tyConTyVars tyCon)
-   rhs = mutantAlgTyConRhs $ algTyConRhs tyCon
-   cls = mutantClass (fromJust $ tyConClass_maybe tyCon)
-   kind = tyConKind tyCon
-   isRec = boolToRecFlag $ isRecursiveTyCon tyCon
-   predTys = tyConStupidTheta tyCon -- can we incrementalise constraints?
-   parent = tyConParent tyCon
-   hasGen = tyConHasGenerics tyCon
-   declaredGadt = isGadtSyntaxTyCon tyCon
+  name = mutantName $ getName tyCon
+  tyvars = interlace (tyConTyVars tyCon)
+                     (map mutantTyVar $ tyConTyVars tyCon)
+  rhs = mutantAlgTyConRhs tyCon newTyCon $ algTyConRhs tyCon
+  cls = mutantClass (fromJust $ tyConClass_maybe tyCon)
+  kind = tyConKind tyCon
+  isRec = boolToRecFlag $ isRecursiveTyCon tyCon
+  predTys = tyConStupidTheta tyCon -- can we incrementalise constraints?
+  parent = tyConParent tyCon
+  hasGen = tyConHasGenerics tyCon
+  declaredGadt = isGadtSyntaxTyCon tyCon
 
-mutantAlgTyConRhs (DataTyCon dataCons isEnum)
-  = DataTyCon (map mutantDataCon dataCons)
+mutantAlgTyConRhs tyCon newTyCon (DataTyCon dataCons isEnum)
+  = DataTyCon ((map mutantDataCon dataCons) ++ 
+               (additionalMutantDataCons tyCon newTyCon))
               isEnum
-mutantAlgTyConRhs (NewTyCon dataCon rhs etadRhs co)
+mutantAlgTyConRhs _ _ (NewTyCon dataCon rhs etadRhs co)
   = NewTyCon (mutantDataCon dataCon)
              (mutantType rhs)
              (mutantEtadType etadRhs)
              (fmap mutantTyCon co)
-mutantAlgTyConRhs AbstractTyCon
+mutantAlgTyConRhs _ _ AbstractTyCon
   = AbstractTyCon
-mutantAlgTyConRhs DataFamilyTyCon
+mutantAlgTyConRhs _ _ DataFamilyTyCon
   = DataFamilyTyCon
 
 mutantDataCon dataCon = mkDataCon 
@@ -181,7 +187,65 @@ mutantDataCon dataCon = mkDataCon
   (DCIds (fmap mutantId $ dataConWrapId_maybe dataCon)
          (mutantId $ dataConWorkId dataCon))
 
+data AdditionalConType = AddConReplacement
+                       | AddConHoist
+                       | AddConIdentity
+additionalConTypes = [AddConReplacement, AddConHoist, AddConIdentity]
+additionalConSuffix AddConReplacement = "replacement"
+additionalConSuffix AddConHoist       = "hoist"
+additionalConSuffix AddConIdentity    = "identity"
 
+additionalMutantDataCons tyCon newTyCon = map addAdditionalCon additionalConTypes
+  where addAdditionalCon type_ = additionalCon type_
+        additionalCon = additionalMutantDataCon newTyCon (getName tyCon)
+additionalMutantDataCon tyCon tyConName addConType
+  = let con = mkDataCon 
+                (additionalMutantDataConName tyConName addConType)
+                False                    -- is infix?
+                []                       -- strictness annotations
+                []                       -- field lables 
+                []                       -- universally quantified type vars
+                existQuantTyVars         -- existentially quantified type vars
+                gadtEqualities           -- gadt equalities
+                []                       -- theta type
+                argTypes                 -- original argument types
+                (mkTyConTy tyCon)-- ???  -- original result type
+                tyCon                    -- representation type constructor
+                []                       -- stupid theta
+                (mkDataConIds (additionalMutantDataConWrapId tyConName)
+                              (additionalMutantDataConWorkId tyConName)
+                              con)
+        gadtEqualities = additionalMutantDataConGadtEqualities tyCon addConType
+        argTypes = additionalMutantDataConArgTypes tyCon addConType
+        existQuantTyVars = additionalMutantDataConExistQuantTyVars tyCon addConType
+     in con
+additionalMutantDataConName tyConName addConType
+  = mutantNameIntoSpace tyConName 
+                        OccName.dataName 
+                        (additionalConSuffix addConType)
+additionalMutantDataConWorkId tyConName
+  = mutantNameIntoSpace tyConName 
+                        OccName.varName 
+                        "data_con_work"
+additionalMutantDataConWrapId tyConName
+  = mutantNameIntoSpace tyConName 
+                        OccName.varName 
+                        "data_con_wrap"
+additionalMutantDataConReplaceVar tyCon
+  = mkTyVar (mutantNameIntoSpace (getName tyCon)
+                                 OccName.varName 
+                                 "replacement_var")
+            liftedTypeKind
+additionalMutantDataConArgTypes tyCon AddConReplacement
+  = [mkTyConTy tyCon]
+additionalMutantDataConArgTypes _ _ = [] 
+  
+additionalMutantDataConGadtEqualities _ _ = [] 
+
+additionalMutantDataConExistQuantTyVars tyCon AddConReplacement
+ = [additionalMutantDataConReplaceVar tyCon]
+additionalMutantDataConExistQuantTyVars _ _ = []
+  
 mutantEtadType (tyVars, type_) = (map mutantTyVar tyVars, mutantType type_)
 
 mutantClass = id
