@@ -20,6 +20,7 @@ import BasicTypes
 import GHC.Paths ( libdir )
 import CoreLint
 import CoreSyn
+import MkCore
 import DataCon
 import ErrUtils
 import FastString ( uniqueOfFS )
@@ -104,30 +105,34 @@ mutantExp (Lit lit) = Lit lit
 mutantExp (App expr arg) = App (mutantExp expr) (mutantExp arg)
 -- for \ a -> b, need to check if a is a (incrementalize_type a)_hoist. 
 -- If so, produce a (incrementalize_type b)_identity.
-mutantExp (Lam id expr) = Lam (mutantCoreBndr id) expr'
+mutantExp (Lam id expr) = Lam (mutantCoreBndr id) (mutantExp expr)
   where expr' | isTyVar id = mutantExp expr
-              | otherwise  = Case (Var $ mutantCoreBndr id) 
+              | otherwise  = Case (Var $ mutantCoreBndr id) -- make this work later.
                                   (mutantCoreBndr id) 
                                   oType
-                                  [hoist, def]
+                                  [def, hoist]
         def = (DEFAULT, [], mutantExp expr)
         hoist = (DataAlt $ lookupDataCon iType AddConHoist
                 ,[]
-                ,Var var)
+                ,mkCoreConApps (lookupDataCon oType AddConIdentity) []
+                )
         iType = mutantType $ varType id
-        oType = mutantType $ exprType expr
-        oConName = (dataConName $ lookupDataCon oType AddConHoist)
-        var = mkLocalVar VanillaId oConName oType vanillaIdInfo
-
-
+        oType = exprType $ mutantExp expr
 mutantExp (Let bind expr) = Let (mutantCoreBind bind) (mutantExp expr)
-mutantExp (Case expr id type_ alts) = Case (mutantExp expr)
-                                           (mutantCoreBndr id)
-                                           (mutantType type_)
-                                           alts
-mutantExp (Cast expr coercion) = Cast (mutantExp expr) coercion
+mutantExp c@(Case expr id type_ alts) = Case (mutantExp expr)
+                                             (mutantCoreBndr id)
+                                             (mutantType type_)
+                                             ((replaceAlt c)
+                                              :(mutantAlts alts))
+mutantExp (Cast expr coercion) = Cast (mutantExp expr) (mutantType coercion)
 mutantExp (Type type_) = Type (mutantType type_)
 mutantExp (Note note expr) = Note note (mutantExp expr)
+
+mutantAlts _ = [] -- map mutantAlt 
+replaceAlt c@(Case expr id type_ alts)
+   = (DataAlt $ lookupDataCon (mutantType $ exprType expr) AddConReplacement
+     ,[exprVar expr]
+     ,mkCoreConApps (lookupDataCon (mutantType type_) AddConReplacement) [c])
 
 mutantTypeEnv env = extendTypeEnvList env (map mutantTyThing $ typeEnvElts env)
 mutantTyThing (AnId id) = AnId $ mutantId id
@@ -135,11 +140,16 @@ mutantTyThing (ADataCon con) = ADataCon $ mutantDataCon con
 mutantTyThing (ATyCon con) = ATyCon $ mutantTyCon con
 mutantTyThing (AClass cls) = AClass $ mutantClass cls
 
+
 mutantType (getTyVar_maybe -> Just tyVar)
   = mkTyVarTy $ mutantTyVar tyVar
 mutantType (splitAppTy_maybe -> Just (a, b))
-  = mkAppTy (mkAppTy (mutantType a) b)
-            (mutantType b)
+  | isApp a   = mkAppTy (mutantType a) (mutantType b)
+  | otherwise = mkAppTy (mkAppTy (mutantType a) b)
+                        (mutantType b)
+  where isApp (splitTyConApp_maybe -> Just (con, _)) = isFunTyCon con
+        isApp _                                      = False
+
 
 mutantType (splitFunTy_maybe -> Just (a, b))
   = mkFunTy (mutantType a) (mutantType b)
@@ -160,13 +170,15 @@ mutantTyCon tyCon = newTyCon
            | isClassTyCon tyCon    = mutantClassTyCon
            | isFunTyCon tyCon      = mutantFunTyCon
            | isPrimTyCon tyCon     = tyCon
-           | otherwise = trace ("Don't know how to mutate tyCon " ++ showCon) tyCon
-  showCon = (showSDoc.ppr.getName$tyCon) ++ " :: " ++ (showSDoc.ppr$tyCon)
+           | otherwise = trace ("Don't know how to mutate tyCon " ++ 
+                                 (showSDoc.ppr.getName$tyCon) ++
+                                  " :: " ++ (showSDoc.ppr$tyCon))
+                               tyCon
 
   mutantClassTyCon = mkClassTyCon name kind tyvars rhs cls isRec
   mutantAlgTyCon = mkAlgTyCon name kind tyvars predTys rhs parent 
                               isRec hasGen declaredGadt
-  mutantFunTyCon = mkFunTyCon (mutantName $ getName tyCon) (tyConKind tyCon)
+  mutantFunTyCon = tyCon -- mkFunTyCon (mutantName $ getName tyCon) (tyConKind tyCon)
 
   name = mutantName $ getName tyCon
   tyvars = interlace (tyConTyVars tyCon)
@@ -221,66 +233,70 @@ mutantDataCon dataCon = mkDataCon
 data AdditionalConType = AddConReplacement
                        | AddConHoist
                        | AddConIdentity
+  deriving Show
 additionalConTypes = [AddConReplacement, AddConHoist, AddConIdentity]
-additionalConSuffix AddConReplacement = "replacement"
+additionalConSuffix AddConReplacement = "replace"
 additionalConSuffix AddConHoist       = "hoist"
 additionalConSuffix AddConIdentity    = "identity"
 
-additionalMutantDataCons tyCon newTyCon = map addAdditionalCon additionalConTypes
+additionalMutantDataCons oldTyCon newTyCon = map addAdditionalCon
+                                                 additionalConTypes
   where addAdditionalCon type_ = additionalCon type_
-        additionalCon = additionalMutantDataCon newTyCon (getName tyCon)
-additionalMutantDataCon tyCon tyConName addConType
-  = let con = mkDataCon 
-                (additionalMutantDataConName tyConName addConType)
-                False                    -- is infix?
-                []                       -- strictness annotations
-                []                       -- field lables 
-                []                       -- universally quantified type vars
-                existQuantTyVars         -- existentially quantified type vars
-                gadtEqualities           -- gadt equalities
-                []                       -- theta type
-                argTypes                 -- original argument types
-                (mkTyConTy tyCon)-- ???  -- original result type
-                tyCon                    -- representation type constructor
-                []                       -- stupid theta
-                (mkDataConIds (additionalMutantDataConWrapId tyConName)
-                              (additionalMutantDataConWorkId tyConName)
+        additionalCon = additionalMutantDataCon newTyCon oldTyCon
+additionalMutantDataCon newTyCon oldTyCon addConType
+  = let tyConName = getName newTyCon
+        con = mkDataCon 
+                (additionalMutantDataConName tyConName  addConType)
+                False                       -- is infix?
+                [HsNoBang | _ <- argTypes ] -- strictness annotations
+                []                          -- field lables 
+                [] --(tyConTyVars oldTyCon) -- universally quantified type vars
+                []                          -- existentially quantified type vars
+                []                          -- gadt equalities
+                []                          -- theta type
+                argTypes                    -- original argument types
+                (mkTyConTy newTyCon)-- ???  -- original result type
+                newTyCon                    -- representation type constructor
+                []                          -- stupid theta
+                (mkDataConIds (additionalMutantDataConWrapId tyConName
+                                                             addConType)
+                              (additionalMutantDataConWorkId tyConName
+                                                             addConType)
                               con)
-        gadtEqualities = additionalMutantDataConGadtEqualities tyCon addConType
-        argTypes = additionalMutantDataConArgTypes tyCon addConType
-        existQuantTyVars = additionalMutantDataConExistQuantTyVars tyCon addConType
-     in con
+        argTypes = additionalMutantDataConArgTypes oldTyCon addConType
+     in  con
 additionalMutantDataConName tyConName addConType
   = mutantNameIntoSpace tyConName 
                         OccName.dataName 
                         (additionalConSuffix addConType)
-additionalMutantDataConWorkId tyConName
+additionalMutantDataConWorkId tyConName addConType
   = mutantNameIntoSpace tyConName 
                         OccName.varName 
-                        "data_con_work"
-additionalMutantDataConWrapId tyConName
+                        ("data_con_work_" ++ additionalConSuffix addConType)
+additionalMutantDataConWrapId tyConName addConType
   = mutantNameIntoSpace tyConName 
                         OccName.varName 
-                        "data_con_wrap"
+                        ("data_con_wrap_" ++ additionalConSuffix addConType)
 additionalMutantDataConReplaceVar tyCon
   = mkTyVar (mutantNameIntoSpace (getName tyCon)
                                  OccName.varName 
-                                 "replacement_var")
+                                 "tyvar_for_replacement_value")
             liftedTypeKind
 additionalMutantDataConArgTypes tyCon AddConReplacement
-  = [mkTyConTy tyCon]
+  = [funTyConToAppTy tyCon]
 additionalMutantDataConArgTypes _ _ = [] 
   
-additionalMutantDataConGadtEqualities _ _ = [] 
+funTyConToAppTy tyCon = mkAppTys (mkTyConTy tyCon) 
+                                 (map mkTyVarTy $ tyConTyVars tyCon)
 
-additionalMutantDataConExistQuantTyVars tyCon AddConReplacement
- = [additionalMutantDataConReplaceVar tyCon]
-additionalMutantDataConExistQuantTyVars _ _ = []
-  
 mutantEtadType (tyVars, type_) = (map mutantTyVar tyVars, mutantType type_)
 
 mutantClass = id
 
+exprVar (Var id) = id
+exprVar other = error ("exprVar " ++ (showSDoc $ ppr other))
+
+exprType :: Expr CoreBndr -> Type
 exprType (Var id) = varType id
 exprType (Lit lit) = literalType lit
 exprType (App expr arg) = mkAppTy (exprType expr) (exprType arg)
@@ -299,7 +315,10 @@ lookupDataCon type_ additionalCon
         suffix = additionalConSuffix additionalCon
         nameString c = occNameString $ nameOccName $ dataConName c
         matchingCon c = List.isSuffixOf suffix (nameString c)
-     in head $ filter matchingCon cons
+     in case filter matchingCon cons of
+          (con:_) -> con
+          []      -> error $ "Couldn't find " ++ show additionalCon ++
+                             " for " ++ (showSDoc $ ppr $ type_)
 
 {-
 import Utils
@@ -479,13 +498,14 @@ process targetFile = do
       d <- desugarModule t
       let d' = mutantCoreModule (ms_mod modSum) d
       liftIO $ do
-        lintPrintAndFail d'
         putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d'
 
       setSessionDynFlags $ dflags' { hscOutName = targetFile ++ ".o"
                                    , extCoreName = targetFile ++ ".hcr"
                                    }
       (hscGenOutput hscOneShotCompiler) (dm_core_module d') modSum Nothing
+      liftIO $ do
+        lintPrintAndFail d'
       return ()
 
 lintPrintAndFail desugaredModule = do 
@@ -504,3 +524,17 @@ main = do
   let (from:[]) = args
   process from
 
+showDataConDetails dataCon = (concat $ List.intersperse "\n" [
+   ("NAME " ++ (showSDoc $ ppr $ dataConName dataCon))
+  ,("  isInfix " ++ (showSDoc $ ppr $ dataConIsInfix dataCon))
+  ,("  strictMarks " ++ (showSDoc $ ppr $ dataConStrictMarks dataCon))
+  ,("  fieldLabels " ++ (showSDoc $ ppr $ dataConFieldLabels dataCon))
+  ,("  univTyVars " ++ (showSDoc $ ppr $ dataConUnivTyVars dataCon))
+  ,("  exTyVars " ++ (showSDoc $ ppr $ dataConExTyVars dataCon))
+  ,("  eqSpec " ++ (showSDoc $ ppr $ dataConEqSpec dataCon))
+  ,("  dictTheta " ++ (showSDoc $ ppr $ dataConDictTheta dataCon)) -- dataConTheta on GHC 7.4?
+  ,("  origArgs " ++ (showSDoc $ ppr $ dataConOrigArgTys dataCon))
+  ,("  origRes " ++ (showSDoc $ ppr $ dataConOrigResTy dataCon))
+  ,("  tyCon " ++ (showSDoc $ ppr $ dataConTyCon dataCon))
+  ,("  repType " ++ (showSDoc $ ppr $ dataConRepType dataCon))
+  ,("  stupidTheta " ++ (showSDoc $ ppr $ dataConStupidTheta dataCon))])
