@@ -18,6 +18,7 @@ import Outputable
 import Bag
 import BasicTypes 
 import GHC.Paths ( libdir )
+import Coercion
 import CoreLint
 import CoreSyn
 import MkCore
@@ -73,11 +74,15 @@ mutantCoreBind corebinds@(Rec name_exps)
 mutantCoreBndr :: CoreBndr -> CoreBndr
 mutantCoreBndr = mutantId
 
-mutantId var = mk (idDetails var) var' type_' vanillaIdInfo
+-- Whatever idDetails is before we mutate it, it's a VanillaId afterwards. 
+-- Worker/wrapper's aren't an exception, because we just mutate their 
+-- names and mkDataConIDs handles the ID construction.
+mutantId var = mk var' type_'
   where var' = (mutantName $ varName var)
         type_' = (mutantType $ varType var)
-        mk | isGlobalId var = mkGlobalVar
-           | isLocalVar var = mkLocalVar
+        mk n t | isTcTyVar var  = mkTcTyVar n t (tcTyVarDetails var)
+               | isGlobalId var = mkGlobalVar VanillaId n t vanillaIdInfo
+               | isLocalVar var = mkLocalVar  VanillaId n t vanillaIdInfo
 
 mutantNameIntoSpace :: Name -> NameSpace -> String -> Name
 mutantNameIntoSpace oldName nameSpace suffix
@@ -105,12 +110,14 @@ mutantExp (Lit lit) = Lit lit
 mutantExp (App expr arg) = App (mutantExp expr) (mutantExp arg)
 -- for \ a -> b, need to check if a is a (incrementalize_type a)_hoist. 
 -- If so, produce a (incrementalize_type b)_identity.
-mutantExp (Lam id expr) = Lam (mutantCoreBndr id) (mutantExp expr)
-  where expr' | isTyVar id = mutantExp expr
-              | otherwise  = Case (Var $ mutantCoreBndr id) -- make this work later.
-                                  (mutantCoreBndr id) 
-                                  oType
-                                  [def, hoist]
+mutantExp (Lam id expr) = expr'
+  where expr' | isTyVar id = trace ("AAA" ++ (showSDocDebug $ ppr id) ++ "     " ++ (showSDocDebug $ ppr $ mutantCoreBndr id)  ++ "BBB") $ Lam id $ Lam (mutantCoreBndr id) (mutantExp expr)
+              | otherwise  = Lam (mutantCoreBndr id) (mutantExp expr) 
+              | otherwise  = Lam (mutantCoreBndr id)
+                                 (Case (Var $ mutantCoreBndr id)
+                                       (mutantCoreBndr id) 
+                                       oType
+                                       [def, hoist])
         def = (DEFAULT, [], mutantExp expr)
         hoist = (DataAlt $ lookupDataCon iType AddConHoist
                 ,[]
@@ -130,9 +137,14 @@ mutantExp (Note note expr) = Note note (mutantExp expr)
 
 mutantAlts _ = [] -- map mutantAlt 
 replaceAlt c@(Case expr id type_ alts)
-   = (DataAlt $ lookupDataCon (mutantType $ exprType expr) AddConReplacement
-     ,[exprVar expr]
-     ,mkCoreConApps (lookupDataCon (mutantType type_) AddConReplacement) [c])
+  = (DataAlt $ lookupDataCon (mutantType $ exprType expr) AddConReplacement
+    ,[exprVar expr]
+    ,App (foldl (\e t -> App e (Type t))
+                (Var $ dataConWorkId con)
+                (tyConAppArgs $ mutantType type_))
+         c)
+  where con = lookupDataCon (mutantType type_) AddConReplacement
+
 
 mutantTypeEnv env = extendTypeEnvList env (map mutantTyThing $ typeEnvElts env)
 mutantTyThing (AnId id) = AnId $ mutantId id
@@ -158,12 +170,12 @@ mutantType (splitTyConApp_maybe -> Just (con, tys))
   = mkTyConApp (mutantTyCon con) (map mutantType tys)
 
 mutantType (splitForAllTy_maybe -> Just (tyVar, ty))
-  = mkForAllTy (mutantTyVar tyVar) (mutantType ty)
+  = mkForAllTy tyVar $ mkForAllTy (mutantTyVar tyVar) (mutantType ty)
 
 
 mutantTyVar = mutantId
 
-mutantTyCon tyCon = newTyCon
+mutantTyCon tyCon = kind `seq` newTyCon
  where
   newTyCon | isAlgTyCon tyCon      = mutantAlgTyCon
            | isAbstractTyCon tyCon = makeTyConAbstract $ mutantAlgTyCon
@@ -192,10 +204,16 @@ mutantTyCon tyCon = newTyCon
   hasGen = tyConHasGenerics tyCon
   declaredGadt = isGadtSyntaxTyCon tyCon
 
+-- the idea here is that a kind of * -> * should become a kind of * -> * -> *, to make room
+-- for the incrementalised versions of the type parameters.
 duplicateKindArgs (splitTyConApp_maybe -> Just (tyCon, []))
   = mkTyConApp tyCon [] 
-duplicateKindArgs kind@(splitTyConApp_maybe -> Just (tyCon, types))
-  = foldr mkFunTy kind types -- what is this I don't even
+-- if we go from TyConApp to TyConApp, then we get a (-> * * *) rather than a (* -> * -> *).
+-- Going from TyConApp to FunTy doesn't seem to have that problem.
+duplicateKindArgs kind@(splitTyConApp_maybe -> Just (tyCon, kinds))
+  = foldl (flip mkFunTy) (head argKinds) $ (tail argKinds) ++ argKinds ++ [resultKind]
+  --foldr mkFunTy (resultKind) $ argKinds ++ argKinds ???
+  where (resultKind:(reverse -> argKinds)) = reverse kinds
 duplicateKindArgs (splitFunTy_maybe -> Just (arg, res))
   = mkFunTy arg res
 duplicateKindArgs args = args
@@ -219,7 +237,8 @@ mutantDataCon dataCon = mkDataCon
   (dataConIsInfix dataCon)
   (dataConStrictMarks dataCon)
   (map mutantName $ dataConFieldLabels dataCon)
-  (map mutantTyVar $ dataConUnivTyVars dataCon)
+  (interlace (dataConUnivTyVars dataCon)
+             (map mutantTyVar $ dataConUnivTyVars dataCon))
   (map mutantTyVar $ dataConExTyVars dataCon)
   (map2 mutantTyVar mutantType $ dataConEqSpec dataCon)
   (dataConDictTheta dataCon) -- dataConTheta on GHC 7.4?
@@ -250,7 +269,7 @@ additionalMutantDataCon newTyCon oldTyCon addConType
                 False                       -- is infix?
                 [HsNoBang | _ <- argTypes ] -- strictness annotations
                 []                          -- field lables 
-                [] --(tyConTyVars oldTyCon) -- universally quantified type vars
+                (tyConTyVars newTyCon)      -- universally quantified type vars
                 []                          -- existentially quantified type vars
                 []                          -- gadt equalities
                 []                          -- theta type
@@ -499,13 +518,14 @@ process targetFile = do
       let d' = mutantCoreModule (ms_mod modSum) d
       liftIO $ do
         putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d'
+        putStrLn $ showSDocDebug $ ppr $ mg_binds $ dm_core_module d'
+      liftIO $ do
+        lintPrintAndFail d'
 
       setSessionDynFlags $ dflags' { hscOutName = targetFile ++ ".o"
                                    , extCoreName = targetFile ++ ".hcr"
                                    }
       (hscGenOutput hscOneShotCompiler) (dm_core_module d') modSum Nothing
-      liftIO $ do
-        lintPrintAndFail d'
       return ()
 
 lintPrintAndFail desugaredModule = do 
