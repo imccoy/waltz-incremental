@@ -56,7 +56,7 @@ mutantModGuts mod mg = mg { mg_binds = mutantCoreBinds (mg_binds mg)
 
 mutantDeps imps mod = extendModuleEnv imps mod [(mkModuleName "Radtime", False, noSrcSpan)]
 
-mutantCoreBinds binds = binds ++ (map mutantCoreBind binds)
+mutantCoreBinds binds = concat $ map mutantCoreBind binds
 
 interlace :: [a] -> [a] -> [a]
 interlace [] [] = []
@@ -65,11 +65,11 @@ interlace (a:as) (b:bs) = a:b:(interlace as bs)
 map2 :: (a -> c) -> (b -> d) -> [(a, b)] -> [(c, d)]
 map2 f g = map (\(a, b) -> (f a, g b))
 
-mutantCoreBind :: CoreBind -> CoreBind
+mutantCoreBind :: CoreBind -> [CoreBind]
 mutantCoreBind corebind@(NonRec name exp) 
-  = NonRec (mutantCoreBndr name) (mutantExp exp)
+  = [corebind, NonRec (mutantCoreBndr name) (mutantExp exp)]
 mutantCoreBind corebinds@(Rec name_exps)
-  = Rec $ map2 mutantCoreBndr mutantExp name_exps
+  = [Rec $ name_exps ++ (map2 mutantCoreBndr mutantExp name_exps)]
 
 mutantCoreBndr :: CoreBndr -> CoreBndr
 mutantCoreBndr = mutantId
@@ -91,7 +91,10 @@ mutantNameIntoSpace oldName nameSpace suffix
                                             occName (nameSrcSpan oldName)
   | isWiredInName oldName  = mkSystemName unique occName 
   | otherwise              = mkSystemName unique occName 
-  where oldNameString = occNameString $ nameOccName $ oldName
+  where oldNameString
+          | n == "ds" = "ds" ++ (show $ getUnique oldName)
+          | otherwise = n
+          where n = occNameString $ nameOccName $ oldName
         nameString | oldNameString == "[]" = "BuiltinList_" ++ suffix
                    | otherwise             = oldNameString ++ "_" ++ suffix
         occName = mkOccName nameSpace nameString
@@ -107,11 +110,13 @@ mutantName oldName = mutantNameIntoSpace oldName
 
 mutantExp (Var id) = Var $ mutantCoreBndr id
 mutantExp (Lit lit) = Lit lit
-mutantExp (App expr arg) = App (mutantExp expr) (mutantExp arg)
+mutantExp (App expr arg)
+  | isTypeArg arg = App (App (mutantExp expr) arg) (mutantExp arg)
+  | otherwise     = App (mutantExp expr) (mutantExp arg)
 -- for \ a -> b, need to check if a is a (incrementalize_type a)_hoist. 
 -- If so, produce a (incrementalize_type b)_identity.
 mutantExp (Lam id expr) = expr'
-  where expr' | isTyVar id = trace ("AAA" ++ (showSDocDebug $ ppr id) ++ "     " ++ (showSDocDebug $ ppr $ mutantCoreBndr id)  ++ "BBB") $ Lam id $ Lam (mutantCoreBndr id) (mutantExp expr)
+  where expr' | isTyVar id = Lam id $ Lam (mutantCoreBndr id) (mutantExp expr)
               | otherwise  = Lam (mutantCoreBndr id) (mutantExp expr) 
               | otherwise  = Lam (mutantCoreBndr id)
                                  (Case (Var $ mutantCoreBndr id)
@@ -125,17 +130,22 @@ mutantExp (Lam id expr) = expr'
                 )
         iType = mutantType $ varType id
         oType = exprType $ mutantExp expr
-mutantExp (Let bind expr) = Let (mutantCoreBind bind) (mutantExp expr)
+mutantExp (Let bind expr) = foldl (\e b -> Let b e) (mutantExp expr) (mutantCoreBind bind)
 mutantExp c@(Case expr id type_ alts) = Case (mutantExp expr)
                                              (mutantCoreBndr id)
                                              (mutantType type_)
-                                             ((replaceAlt c)
-                                              :(mutantAlts alts))
+                                             ((mutantAlts alts) ++
+                                              [replaceAlt c])
 mutantExp (Cast expr coercion) = Cast (mutantExp expr) (mutantType coercion)
 mutantExp (Type type_) = Type (mutantType type_)
 mutantExp (Note note expr) = Note note (mutantExp expr)
 
-mutantAlts _ = [] -- map mutantAlt 
+mutantAlts = mapMaybe mutantAlt 
+mutantAlt (DataAlt dataCon, binds, expr) = Just (DataAlt (mutantDataCon dataCon)
+                                                ,map mutantId binds
+                                                ,mutantExp expr)
+mutantAlt (DEFAULT, [], expr) = Just (DEFAULT, [], mutantExp expr)
+mutantAlt _ = Nothing
 replaceAlt c@(Case expr id type_ alts)
   = (DataAlt $ lookupDataCon (mutantType $ exprType expr) AddConReplacement
     ,[exprVar expr]
@@ -517,10 +527,9 @@ process targetFile = do
       d <- desugarModule t
       let d' = mutantCoreModule (ms_mod modSum) d
       liftIO $ do
-        putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d'
-        putStrLn $ showSDocDebug $ ppr $ mg_binds $ dm_core_module d'
-      liftIO $ do
         lintPrintAndFail d'
+      liftIO $ do
+        putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d'
 
       setSessionDynFlags $ dflags' { hscOutName = targetFile ++ ".o"
                                    , extCoreName = targetFile ++ ".hcr"
