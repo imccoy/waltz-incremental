@@ -117,7 +117,6 @@ mutantExp (App expr arg)
 -- If so, produce a (incrementalize_type b)_identity.
 mutantExp (Lam id expr) = expr'
   where expr' | isTyVar id = Lam id $ Lam (mutantCoreBndr id) (mutantExp expr)
-              | otherwise  = Lam (mutantCoreBndr id) (mutantExp expr) 
               | otherwise  = Lam (mutantCoreBndr id)
                                  (Case (Var $ mutantCoreBndr id)
                                        (mutantCoreBndr id) 
@@ -126,7 +125,8 @@ mutantExp (Lam id expr) = expr'
         def = (DEFAULT, [], mutantExp expr)
         hoist = (DataAlt $ lookupDataCon iType AddConHoist
                 ,[]
-                ,mkCoreConApps (lookupDataCon oType AddConIdentity) []
+                ,dataConAtType (lookupDataCon oType AddConIdentity)
+                               oType
                 )
         iType = mutantType $ varType id
         oType = exprType $ mutantExp expr
@@ -145,13 +145,12 @@ mutantAlt (DataAlt dataCon, binds, expr) = Just (DataAlt (mutantDataCon dataCon)
                                                 ,map mutantId binds
                                                 ,mutantExp expr)
 mutantAlt (DEFAULT, [], expr) = Just (DEFAULT, [], mutantExp expr)
-mutantAlt _ = Nothing
+mutantAlt _ = Nothing -- if we handle changes-moving-into-a-value, then we should
+                      -- probably do something for literals here
 replaceAlt c@(Case expr id type_ alts)
   = (DataAlt $ lookupDataCon (mutantType $ exprType expr) AddConReplacement
     ,[exprVar expr]
-    ,App (foldl (\e t -> App e (Type t))
-                (Var $ dataConWorkId con)
-                (tyConAppArgs $ mutantType type_))
+    ,App (dataConAtType con $ mutantType type_)
          c)
   where con = lookupDataCon (mutantType type_) AddConReplacement
 
@@ -328,8 +327,8 @@ exprVar other = error ("exprVar " ++ (showSDoc $ ppr other))
 exprType :: Expr CoreBndr -> Type
 exprType (Var id) = varType id
 exprType (Lit lit) = literalType lit
-exprType (App expr arg) = mkAppTy (exprType expr) (exprType arg)
-exprType (Lam id expr) = exprType expr
+exprType (App expr arg) = snd $ splitFunTys (exprType expr)
+exprType (Lam id expr) = mkFunTy (varType id) (exprType expr)
 exprType (Let bind expr) = exprType expr
 exprType (Case expr id type_ alts) = type_
 exprType (Cast expr coercion) = coercion
@@ -337,7 +336,10 @@ exprType (Type type_) = type_
 exprType (Note note expr) = exprType expr
 
 lookupDataCon type_ additionalCon
-  = let tyCon = tyConAppTyCon type_
+  = let tyCon = case (splitTyConApp_maybe type_) of
+                  Just (con, _) -> con
+                  otherwise     -> error $ "so confused " ++ 
+                                           (showSDoc $ ppr $ type_)
         cons | isAlgTyCon tyCon = data_cons $ algTyConRhs tyCon
              | otherwise = error $ "not an alg ty con" ++
                                    (showSDoc $ ppr tyCon)
@@ -348,6 +350,7 @@ lookupDataCon type_ additionalCon
           (con:_) -> con
           []      -> error $ "Couldn't find " ++ show additionalCon ++
                              " for " ++ (showSDoc $ ppr $ type_)
+        
 
 {-
 import Utils
@@ -527,15 +530,22 @@ process targetFile = do
       d <- desugarModule t
       let d' = mutantCoreModule (ms_mod modSum) d
       liftIO $ do
-        lintPrintAndFail d'
-      liftIO $ do
         putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d'
+      liftIO $ do
+        lintPrintAndFail d'
 
       setSessionDynFlags $ dflags' { hscOutName = targetFile ++ ".o"
                                    , extCoreName = targetFile ++ ".hcr"
                                    }
       (hscGenOutput hscOneShotCompiler) (dm_core_module d') modSum Nothing
       return ()
+
+dataConAtType con type_ = foldl (\e t -> App e (Type t))
+                                (Var $ dataConWorkId con)
+                                typeArgs
+  where typeArgs = case splitTyConApp_maybe type_ of
+                     Just (_, args) -> args
+                     otherwise      -> []
 
 lintPrintAndFail desugaredModule = do 
   let bindings = mg_binds $ dm_core_module desugaredModule
