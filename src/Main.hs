@@ -94,11 +94,13 @@ mutantId var = mk var' type_'
 mutantNameIntoSpace :: Name -> NameSpace -> String -> Name
 mutantNameIntoSpace oldName nameSpace suffix
   | isInternalName oldName = mkInternalName unique occName (nameSrcSpan oldName)
-  | isExternalName oldName = mkExternalName unique (adaptModule $ nameModule oldName)
+  | isExternalName oldName = mkExternalName unique (adaptModule $ 
+                                                      nameModule oldName)
                                             occName (nameSrcSpan oldName)
   | isWiredInName oldName  = mkSystemName unique occName 
   | otherwise              = mkSystemName unique occName 
   where oldNameString
+          -- anonymous vars differ in the unique, but not the name.
           | n == "ds" = "ds" ++ (show $ getUnique oldName)
           | otherwise = n
           where n = occNameString $ nameOccName $ oldName
@@ -110,6 +112,9 @@ mutantNameIntoSpace oldName nameSpace suffix
                         | otherwise                            = mod
         radtime = mkModule mainPackageId (mkModuleName "Radtime") 
 
+mutantNameUnique oldName nameSpace suffix
+  = setNameUnique oldName (nameUnique mutantName)
+  where mutantName = mutantNameIntoSpace oldName nameSpace suffix
 
 mutantName oldName = mutantNameIntoSpace oldName
                                          (occNameSpace $ nameOccName oldName)
@@ -350,10 +355,8 @@ builderMutantDataCon oldTyCon newTyCon dataCon n
                 (mkTyConTy newTyCon)-- ???  -- original result type
                 newTyCon                    -- representation type constructor
                 []                          -- stupid theta
-                (mkDataConIds (builderMutantDataConWrapId tyConName
-                                                          n)
-                              (builderMutantDataConWorkId tyConName
-                                                          n)
+                (mkDataConIds (builderMutantDataConWrapId con n)
+                              (builderMutantDataConWorkId con n)
                               con)
         argTypes = listWithout n (dataConOrigArgTys dataCon)
      in  con
@@ -378,10 +381,8 @@ additionalMutantDataCon newTyCon oldTyCon addConType
                 (mkTyConTy newTyCon)-- ???  -- original result type
                 newTyCon                    -- representation type constructor
                 []                          -- stupid theta
-                (mkDataConIds (additionalMutantDataConWrapId tyConName
-                                                             addConType)
-                              (additionalMutantDataConWorkId tyConName
-                                                             addConType)
+                (mkDataConIds (additionalMutantDataConWrapId con addConType)
+                              (additionalMutantDataConWorkId con addConType)
                               con)
         argTypes = additionalMutantDataConArgTypes oldTyCon addConType
      in  con
@@ -389,14 +390,14 @@ additionalMutantDataConName tyConName addConType
   = mutantNameIntoSpace tyConName 
                         OccName.dataName 
                         (additionalConSuffix addConType)
-additionalMutantDataConWorkId tyConName addConType
-  = mutantNameIntoSpace tyConName 
-                        OccName.varName 
-                        ("data_con_work_" ++ additionalConSuffix addConType)
-additionalMutantDataConWrapId tyConName addConType
-  = mutantNameIntoSpace tyConName 
-                        OccName.varName 
-                        ("data_con_wrap_" ++ additionalConSuffix addConType)
+additionalMutantDataConWorkId dataCon addConType
+  = mutantNameUnique (dataConName dataCon)
+                     OccName.varName 
+                     ("data_con_work_" ++ additionalConSuffix addConType)
+additionalMutantDataConWrapId dataCon addConType
+  = mutantNameUnique (dataConName dataCon)
+                     OccName.varName 
+                     ("data_con_wrap_" ++ additionalConSuffix addConType)
 additionalMutantDataConReplaceVar tyCon
   = mkTyVar (mutantNameIntoSpace (getName tyCon)
                                  OccName.varName 
@@ -411,14 +412,14 @@ builderMutantDataConName tyConName n
   = mutantNameIntoSpace tyConName 
                         OccName.dataName 
                         (builderConSuffix n)
-builderMutantDataConWorkId tyConName n
-  = mutantNameIntoSpace tyConName 
-                        OccName.varName 
-                        ("data_con_work_" ++ builderConSuffix n)
-builderMutantDataConWrapId tyConName n
-  = mutantNameIntoSpace tyConName 
-                        OccName.varName 
-                        ("data_con_wrap_" ++ builderConSuffix n)
+builderMutantDataConWorkId dataCon n
+  = mutantNameUnique (dataConName dataCon)
+                     OccName.varName 
+                     ("data_con_work_" ++ builderConSuffix n)
+builderMutantDataConWrapId dataCon n
+  = mutantNameUnique (dataConName dataCon)
+                     OccName.varName 
+                     ("data_con_wrap_" ++ builderConSuffix n)
 
 
   
@@ -494,6 +495,7 @@ process targetFile = do
                                     , Opt_MagicHash]
       let dflags_dopts = foldl dopt_set dflags_xopts
                                     [Opt_EmitExternalCore
+                                    , Opt_ForceRecomp
                                     , Opt_D_verbose_core2core]
       let dflags' = dflags_dopts { verbosity = 3 }
       setSessionDynFlags dflags'
@@ -512,8 +514,9 @@ process targetFile = do
       liftIO $ do
         lintPrintAndFail d'
 
-      setSessionDynFlags $ dflags' { hscOutName = targetFile ++ ".o"
+      setSessionDynFlags $ dflags' { hscOutName = targetFile ++ ".S"
                                    , extCoreName = targetFile ++ ".hcr"
+                                   , outputFile = Just $ targetFile ++ ".o"
                                    }
       (hscGenOutput hscOneShotCompiler) (dm_core_module d') modSum Nothing
       return ()

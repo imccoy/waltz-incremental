@@ -2,6 +2,7 @@ dist
 *.hi
 *.o
 demo/*.hcr
+demo/*.S
 demo/db
 demo/deps
 demo/Bprime.hs
