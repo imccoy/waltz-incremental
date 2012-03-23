@@ -1,11 +1,12 @@
 {-# LANGUAGE OverloadedStrings, ScopedTypeVariables, MultiParamTypeClasses, UndecidableInstances #-}
 module Radtime where
 
+import Control.Monad.IO.Class
 import qualified Data.ByteString.Lazy.Char8 as LB8
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString as B
-import qualified Data.Enumerator.List as EL
-import Data.Enumerator (tryIO)
+import Data.Conduit
+import qualified Data.Conduit.List as CL
 import Data.Maybe (fromJust, maybeToList)
 import Data.IORef
 import Network.Wai
@@ -50,25 +51,25 @@ instance Incrementalised Int_incrementalised Int where
   applyInputChange c _ = error $ "no applyInputChange for " ++ (show c)
 
 -- data ZMZN a = ZC a (ZMZN a) | []
-data BuiltinList_incrementalised a a_incrementalised = ZC_incrementalised
+data BuiltinList_incrementalised a a_incrementalised = BuiltinList_incrementalised
                                                    a_incrementalised 
                                                    (BuiltinList_incrementalised a a_incrementalised)
-                                              | ZC_incrementalised_build_using_1 a
-                                              | ZC_incrementalised_build_using_0 [a]
+                                              | BuiltinList_incrementalised_build_using_1 a
+                                              | BuiltinList_incrementalised_build_using_0 [a]
                                               | BuiltinList_incrementalised_replace [a] -- replace the whole list with the specified value
                                               | BuiltinList_incrementalised_hoist
                                               | BuiltinList_incrementalised_identity -- that's ZMZN the type of lists, not ZMZN the empty list
-                                              | BuiltinList_incrementalised -- empty list constructor
+                                              | ZMZN_incrementalised -- empty list constructor
 
 instance (Incrementalised elem_incrementalised elem) => 
             Incrementalised (BuiltinList_incrementalised elem elem_incrementalised) ([elem]) where
-  applyInputChange (ZC_incrementalised hchange tchange) (h:t) = (applyInputChange hchange h):(applyInputChange tchange t)
-  applyInputChange (ZC_incrementalised_build_using_1 a) as = a:as
-  applyInputChange (ZC_incrementalised_build_using_0 as) a = a ++ as -- dubious, at best
+  applyInputChange (BuiltinList_incrementalised hchange tchange) (h:t) = (applyInputChange hchange h):(applyInputChange tchange t)
+  applyInputChange (BuiltinList_incrementalised_build_using_1 a) as = a:as
+  applyInputChange (BuiltinList_incrementalised_build_using_0 as) a = a ++ as -- dubious, at best
   applyInputChange (BuiltinList_incrementalised_replace n) _ = n
   applyInputChange (BuiltinList_incrementalised_identity) m = m
 
-head_incrementalised (ZC_incrementalised_build_using_1 new_head) = BuiltinList_incrementalised_replace new_head
+head_incrementalised (BuiltinList_incrementalised_build_using_1 new_head) = BuiltinList_incrementalised_replace new_head
 head_incrementalised _ = error "can't do incrementalised head"
 --head_incrementalised (ZC_incrementalised_build_using_1 new_head :: BuiltinList_incrementalised [a] (BuiltinList_incrementalised a a_incrementalised)) = BuiltinList_incrementalised_incrementalised_replace new_head :: a_incrementalised
 --head_incrementalised _ = error "can't do incrementalised head"
@@ -77,10 +78,10 @@ length_incrementalised (BuiltinList_incrementalised_replace a) = Int_incremental
 length_incrementalised _ = error "can't do incrementalised length"
 
 app parse_request state incrementalised_state_function representationFunction request = do
-  request_body_chunks <- EL.consume
+  request_body_chunks <- (requestBody request) $$ CL.consume
   let request_body_query = parseQuery $ B.concat request_body_chunks
   let maybe_input_change = processRequest parse_request request request_body_query
-  current_state <- tryIO $ readIORef state
+  current_state <- liftIO $ readIORef state
   let new_state = case maybe_input_change of
                     Nothing             -> current_state
                     (Just input_change) -> let output_change = incrementalised_state_function input_change
@@ -89,7 +90,7 @@ app parse_request state incrementalised_state_function representationFunction re
               status200
               [("Content-Type", B8.pack "text/html")]
               (renderHtml $ representationFunction new_state)
-  tryIO $ writeIORef state new_state
+  liftIO $ writeIORef state new_state
   return response
 
 runApp parse_request initial_state incrementalized_state_function page_view = do
