@@ -3,13 +3,9 @@
 module Main where
 
 import Control.Monad
-import qualified Data.Data as Data
-import Data.Either
 import qualified Data.List as List
 import Data.Maybe
 import Debug.Trace
-import System.Directory (removeFile)
-import System.IO
 import System.Environment (getArgs)
 import System.Exit
 
@@ -18,32 +14,20 @@ import Outputable
 import Bag
 import BasicTypes 
 import GHC.Paths ( libdir )
-import Coercion
 import CoreLint
 import CoreMonad
 import CoreSyn
 import DataCon
 import ErrUtils
-import FastString ( uniqueOfFS )
 import HscTypes hiding (lookupDataCon)
 import HscMain
-import HsDecls
-import HsPat
 import IdInfo
-import IfaceEnv
 import Literal
-import MkCore
 import MkId
 import Module
-import MonadUtils
 import Name hiding (varName)
-import NameEnv
 import OccName hiding (varName)
 import qualified OccName as OccName
-import OccurAnal
-import RdrName
-import SimplEnv
-import SimplUtils
 import Type
 import TyCon
 import Unique
