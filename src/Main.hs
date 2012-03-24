@@ -101,17 +101,26 @@ mutantNameIntoSpace oldName nameSpace suffix
   | otherwise              = mkSystemName unique occName 
   where oldNameString
           -- anonymous vars differ in the unique, but not the name.
-          | n == "ds" = "ds" ++ (show $ getUnique oldName)
-          | otherwise = n
+          | n == "ds"              = "ds" ++ (show $ getUnique oldName)
+          | n == "+"               = "plus"
+          | List.isPrefixOf "$f" n = "typeclass_" ++ drop 2 n
+          | otherwise              = n
           where n = occNameString $ nameOccName $ oldName
         nameString | oldNameString == "[]" = "BuiltinList_" ++ suffix
                    | otherwise             = oldNameString ++ "_" ++ suffix
         occName = mkOccName nameSpace nameString
         unique = getUnique occName
         adaptModule mod | modulePackageId mod == primPackageId = radtime
+                        | modulePackageId mod == rtsPackageId  = radtime
+                        | modulePackageId mod == basePackageId = radtime
                         | otherwise                            = mod
         radtime = mkModule mainPackageId (mkModuleName "Radtime") 
 
+-- in The Real World, everything lives in a monad that lets you pluck new
+-- uniques out of the unique supply. I didn't want to do that, so we
+-- append a string according to the purpose that we want the unique for,
+-- make the name with that string, and just use the unique from that new
+-- name. Essentially we piggy-back on FastString's impure trickery.
 mutantNameUnique oldName nameSpace suffix
   = setNameUnique oldName (nameUnique mutantName)
   where mutantName = mutantNameIntoSpace oldName nameSpace suffix
@@ -154,6 +163,7 @@ mutantExp (Type type_) = Type (mutantType type_)
 mutantExp (Note note expr) = Note note (mutantExp expr)
 
 mutantAlts = mapMaybe mutantAlt 
+mutantAlt (DataAlt _, [], _) = Nothing -- these cases get handled by replaceAlt
 mutantAlt (DataAlt dataCon, binds, expr) = Just (DataAlt (mutantDataCon dataCon)
                                                 ,map mutantId binds
                                                 ,mutantExp expr)
@@ -485,7 +495,7 @@ dataConAtType con type_ = foldl (\e t -> App e (Type t))
                      otherwise      -> []
 
 
-process targetFile = do
+process targetFile moduleName = do
   defaultErrorHandler defaultDynFlags $ do
     runGhc (Just libdir) $ do
       dflags <- getSessionDynFlags
@@ -495,21 +505,27 @@ process targetFile = do
                                     , Opt_MagicHash]
       let dflags_dopts = foldl dopt_set dflags_xopts
                                     [Opt_EmitExternalCore
-                                    , Opt_ForceRecomp
-                                    , Opt_D_verbose_core2core]
-      let dflags' = dflags_dopts { verbosity = 3 }
+                                    , Opt_ForceRecomp]
+                                    --, Opt_D_verbose_core2core]
+      let dflags' = dflags_dopts -- { verbosity = 3 }
       setSessionDynFlags dflags'
       target <- guessTarget targetFile Nothing
       target_runtime <- guessTarget "Radtime" Nothing
-      setTargets [target, target_runtime]
+      setTargets [target]
+      liftIO $ putStrLn "loading."
       load LoadAllTargets
-      modSum <- getModSummary $ mkModuleName targetFile
+      liftIO $ putStrLn "loaded. Getting modSum."
+      modGraph <- getModuleGraph
+      liftIO $ putStrLn $ showSDoc $ ppr modGraph
+      modSum <- getModSummary $ mkModuleName moduleName
+      liftIO $ putStrLn "Got modSum. Parsing."
       p <- parseModule modSum
       t <- typecheckModule p
       d <- desugarModule t
       let d' = mutantCoreModule (ms_mod modSum) d
       liftIO $ do
         putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d'
+        putStrLn $ ms_hspp_file modSum
 
       liftIO $ do
         lintPrintAndFail d'
@@ -531,11 +547,13 @@ lintPrintAndFail desugaredModule = do
 
 main = do
   args <- getArgs
-  when (length args /= 1) $ do
-    putStrLn $ "Usage: Incrementalizer <from.hs>"
+  when (length args > 2) $ do
+    putStrLn $ "Usage: Incrementalizer from [moduleName]"
     exitFailure
-  let (from:[]) = args
-  process from
+  let (from, moduleName) = case args of
+                             [from] -> (from, from)
+                             [from, moduleName] -> (from, moduleName)
+  process from moduleName
 
 showDataConDetails dataCon = (concat $ List.intersperse "\n" [
    ("NAME " ++ (showSDoc $ ppr $ dataConName dataCon))

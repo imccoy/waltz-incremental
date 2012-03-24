@@ -9,6 +9,7 @@ import Data.Conduit
 import qualified Data.Conduit.List as CL
 import Data.Maybe (fromJust, maybeToList)
 import Data.IORef
+import Debug.Trace
 import Network.Wai
 import Network.HTTP.Types
 import Network.Wai.Handler.Warp (run)
@@ -40,9 +41,9 @@ data Int_incrementalised = Int_incrementalised_add Int_incrementalised Int_incre
                          | Int_incrementalised_hoist
   deriving (Show)
 
-zdfNumInt_incrementalised = undefined -- will be passed to zp_incrementalised, which will ignore it
+typeclass_NumInt_incrementalised = undefined -- will be passed to zp_incrementalised, which will ignore it
 
-zp_incrementalised _ a b = Int_incrementalised_add a b
+plus_incrementalised _ a b = Int_incrementalised_add a b
 
 instance Incrementalised Int_incrementalised Int where
   applyInputChange (Int_incrementalised_add a b) m = (applyInputChange a m) + (applyInputChange b m)
@@ -60,6 +61,7 @@ data BuiltinList_incrementalised a a_incrementalised = BuiltinList_incrementalis
                                               | BuiltinList_incrementalised_hoist
                                               | BuiltinList_incrementalised_identity -- that's ZMZN the type of lists, not ZMZN the empty list
                                               | ZMZN_incrementalised -- empty list constructor
+  deriving (Show)
 
 instance (Incrementalised elem_incrementalised elem) => 
             Incrementalised (BuiltinList_incrementalised elem elem_incrementalised) ([elem]) where
@@ -69,12 +71,18 @@ instance (Incrementalised elem_incrementalised elem) =>
   applyInputChange (BuiltinList_incrementalised_replace n) _ = n
   applyInputChange (BuiltinList_incrementalised_identity) m = m
 
-head_incrementalised (BuiltinList_incrementalised_build_using_1 new_head) = BuiltinList_incrementalised_replace new_head
+head_incrementalised (BuiltinList_incrementalised_build_using_1 new_head)
+  = BuiltinList_incrementalised_replace new_head
 head_incrementalised _ = error "can't do incrementalised head"
 --head_incrementalised (ZC_incrementalised_build_using_1 new_head :: BuiltinList_incrementalised [a] (BuiltinList_incrementalised a a_incrementalised)) = BuiltinList_incrementalised_incrementalised_replace new_head :: a_incrementalised
 --head_incrementalised _ = error "can't do incrementalised head"
 
-length_incrementalised (BuiltinList_incrementalised_replace a) = Int_incrementalised_replace $ length a
+length_incrementalised a
+  | trace (show a) False = undefined
+length_incrementalised (BuiltinList_incrementalised_replace a)
+  = Int_incrementalised_replace $ length a
+length_incrementalised (BuiltinList_incrementalised_build_using_1 _)
+  = Int_incrementalised_add (Int_incrementalised_replace 1) (Int_incrementalised_identity)
 length_incrementalised _ = error "can't do incrementalised length"
 
 app parse_request state incrementalised_state_function representationFunction request = do
