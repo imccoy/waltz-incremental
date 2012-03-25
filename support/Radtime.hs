@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, ScopedTypeVariables, MultiParamTypeClasses, UndecidableInstances #-}
+{-# LANGUAGE OverloadedStrings, ScopedTypeVariables, MultiParamTypeClasses, UndecidableInstances, Rank2Types #-}
 module Radtime where
 
 import Control.Monad.IO.Class
@@ -10,6 +10,7 @@ import qualified Data.Conduit.List as CL
 import Data.Maybe (fromJust, maybeToList)
 import Data.IORef
 import Debug.Trace
+import GHC.Prim
 import Network.Wai
 import Network.HTTP.Types
 import Network.Wai.Handler.Warp (run)
@@ -18,14 +19,17 @@ import Text.Blaze.Renderer.Utf8 (renderHtml)
 class Incrementalised incrementalised base where 
   applyInputChange  :: incrementalised -> base -> base
 
-data Char_incrementalised = Char_incrementalised_replace Char
-                          | Char_incrementalised_hoist
+data Char_incrementalised = Char_incrementalised_C# Char#
+                          | Char_incrementalised_replace Char
                           | Char_incrementalised_identity
+                          | Char_incrementalised_hoist
   deriving Show
 
-data Bool_incrementalised = Bool_incrementalised_replace Bool
-                          | Bool_incrementalised_hoist
+data Bool_incrementalised = Bool_incrementalised_False
+                          | Bool_incrementalised_True
+                          | Bool_incrementalised_replace Bool
                           | Bool_incrementalised_identity
+                          | Bool_incrementalised_hoist
   deriving Show
 
 instance Incrementalised Char_incrementalised Char where
@@ -34,15 +38,17 @@ instance Incrementalised Char_incrementalised Char where
   applyInputChange c _ = error $ "no applyInputChange for " ++ (show c)
 
 
-data Int_incrementalised = Int_incrementalised_add Int_incrementalised Int_incrementalised
-                         | Int_incrementalised_multiply Int_incrementalised Int_incrementalised
+data Int_incrementalised = Int_incrementalised_I# Int#
                          | Int_incrementalised_replace Int
-                         | Int_incrementalised_identity
                          | Int_incrementalised_hoist
+                         | Int_incrementalised_identity
+                         | Int_incrementalised_add Int_incrementalised Int_incrementalised
+                         | Int_incrementalised_multiply Int_incrementalised Int_incrementalised
   deriving (Show)
 
 typeclass_NumInt_incrementalised = undefined -- will be passed to zp_incrementalised, which will ignore it
 
+plus_incrementalised :: forall a. forall a_inc. ((forall tc. tc) -> Int_incrementalised -> Int_incrementalised -> Int_incrementalised)
 plus_incrementalised _ a b = Int_incrementalised_add a b
 
 instance Incrementalised Int_incrementalised Int where
@@ -52,15 +58,15 @@ instance Incrementalised Int_incrementalised Int where
   applyInputChange c _ = error $ "no applyInputChange for " ++ (show c)
 
 -- data ZMZN a = ZC a (ZMZN a) | []
-data BuiltinList_incrementalised a a_incrementalised = BuiltinList_incrementalised
+data BuiltinList_incrementalised a a_incrementalised = ZMZN_incrementalised -- empty list constructor
+                                              | BuiltinList_incrementalised
                                                    a_incrementalised 
                                                    (BuiltinList_incrementalised a a_incrementalised)
-                                              | BuiltinList_incrementalised_build_using_1 a
-                                              | BuiltinList_incrementalised_build_using_0 [a]
                                               | BuiltinList_incrementalised_replace [a] -- replace the whole list with the specified value
                                               | BuiltinList_incrementalised_hoist
                                               | BuiltinList_incrementalised_identity -- that's ZMZN the type of lists, not ZMZN the empty list
-                                              | ZMZN_incrementalised -- empty list constructor
+                                              | BuiltinList_incrementalised_build_using_1 a
+                                              | BuiltinList_incrementalised_build_using_0 [a]
   deriving (Show)
 
 instance (Incrementalised elem_incrementalised elem) => 
@@ -77,8 +83,7 @@ head_incrementalised _ = error "can't do incrementalised head"
 --head_incrementalised (ZC_incrementalised_build_using_1 new_head :: BuiltinList_incrementalised [a] (BuiltinList_incrementalised a a_incrementalised)) = BuiltinList_incrementalised_incrementalised_replace new_head :: a_incrementalised
 --head_incrementalised _ = error "can't do incrementalised head"
 
-length_incrementalised a
-  | trace (show a) False = undefined
+length_incrementalised :: forall a. forall a_inc. (BuiltinList_incrementalised a a_inc -> Int_incrementalised)
 length_incrementalised (BuiltinList_incrementalised_replace a)
   = Int_incrementalised_replace $ length a
 length_incrementalised (BuiltinList_incrementalised_build_using_1 _)

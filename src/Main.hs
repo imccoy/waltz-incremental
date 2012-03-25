@@ -28,6 +28,7 @@ import Module
 import Name hiding (varName)
 import OccName hiding (varName)
 import qualified OccName as OccName
+import StaticFlags
 import Type
 import TyCon
 import Unique
@@ -507,7 +508,8 @@ process targetFile moduleName = do
                                     [Opt_EmitExternalCore
                                     , Opt_ForceRecomp]
                                     --, Opt_D_verbose_core2core]
-      let dflags' = dflags_dopts -- { verbosity = 3 }
+      let dflags' = dflags_dopts -- { verbosity = 4 }
+      liftIO $ addWay WayDebug
       setSessionDynFlags dflags'
       target <- guessTarget targetFile Nothing
       target_runtime <- guessTarget "Radtime" Nothing
@@ -530,11 +532,11 @@ process targetFile moduleName = do
       liftIO $ do
         lintPrintAndFail d'
 
-      setSessionDynFlags $ dflags' { hscOutName = targetFile ++ ".S"
+      setSessionDynFlags $ dflags' { hscOutName = targetFile ++ ".s"
                                    , extCoreName = targetFile ++ ".hcr"
                                    , outputFile = Just $ targetFile ++ ".o"
                                    }
-      (hscGenOutput hscOneShotCompiler) (dm_core_module d') modSum Nothing
+      (hscGenOutput hscBatchCompiler) (dm_core_module d') modSum Nothing
       return ()
 
 lintPrintAndFail desugaredModule = do 

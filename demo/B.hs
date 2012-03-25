@@ -1,9 +1,14 @@
 module B where
 import Radtime
 
+data TryInt =  TryIntP Int
+
 data TryList a = EmptyTryList | ConsTryList a (TryList a)
 
-data AppState = AppState { appStateWordsLength :: Int, appStateWords :: [String], appStateMostRecentWord :: String }
+data AppState = AppState { appStateWordsLength :: Int
+                         , appStateWords :: [String]
+                         , appStateMostRecentWord :: String
+                         }
 
 thing True = "yes"
 thing False = "no"

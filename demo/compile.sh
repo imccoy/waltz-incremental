@@ -1,2 +1,2 @@
 sh compile-b.sh && \
-ghc Bprime.main.hs
+ghc -rtsopts -debug Bprime.main.hs

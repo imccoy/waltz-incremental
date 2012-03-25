@@ -1,12 +1,4 @@
 dist
 *.hi
 *.o
-demo/*.hcr
-demo/*.S
-demo/db
-demo/deps
-demo/Bprime.hs
-demo/Bprime.*instances.hs
-demo/Bprime
-demo/Bprime-web
 .*.swp
