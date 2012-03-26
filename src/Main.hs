@@ -104,7 +104,9 @@ mutantNameIntoSpace oldName nameSpace suffix
           -- anonymous vars differ in the unique, but not the name.
           | n == "ds"              = "ds" ++ (show $ getUnique oldName)
           | n == "+"               = "plus"
+          | n == "."               = "compose"
           | List.isPrefixOf "$f" n = "typeclass_" ++ drop 2 n
+          | List.isPrefixOf "$c" n = n ++ (show $ getUnique oldName)
           | otherwise              = n
           where n = occNameString $ nameOccName $ oldName
         nameString | oldNameString == "[]" = "BuiltinList_" ++ suffix
@@ -251,7 +253,9 @@ mutantType (splitForAllTy_maybe -> Just (tyVar, ty))
   = mkForAllTy tyVar $ mkForAllTy (mutantTyVar tyVar) (mutantType ty)
 
 
-mutantTyVar = mutantId
+mutantTyVar v = let m = mutantId v
+                    k = varType m
+                 in setVarType m (duplicateKindArgs k)
 
 mutantTyCon tyCon = newTyCon
  where
@@ -268,7 +272,8 @@ mutantTyCon tyCon = newTyCon
   mutantClassTyCon = mkClassTyCon name kind tyvars rhs cls isRec
   mutantAlgTyCon = mkAlgTyCon name kind tyvars predTys rhs parent 
                               isRec hasGen declaredGadt
-  mutantFunTyCon = tyCon -- mkFunTyCon (mutantName $ getName tyCon) (tyConKind tyCon)
+  mutantFunTyCon = tyCon
+       --mkFunTyCon (mutantName $ getName tyCon) (duplicateKindArgs $ tyConKind tyCon)
 
   name = mutantName $ getName tyCon
   tyvars = interlace (tyConTyVars tyCon)
@@ -288,12 +293,13 @@ duplicateKindArgs (splitTyConApp_maybe -> Just (tyCon, []))
   = mkTyConApp tyCon [] 
 -- if we go from TyConApp to TyConApp, then we get a (-> * * *) rather than a (* -> * -> *).
 -- Going from TyConApp to FunTy doesn't seem to have that problem.
-duplicateKindArgs kind@(splitTyConApp_maybe -> Just (tyCon, kinds))
+duplicateKindArgs (splitTyConApp_maybe -> Just (tyCon, kinds))
   = foldl (flip mkFunTy) (head argKinds) $ (tail argKinds) ++ argKinds ++ [resultKind]
   --foldr mkFunTy (resultKind) $ argKinds ++ argKinds ???
   where (resultKind:(reverse -> argKinds)) = reverse kinds
-duplicateKindArgs (splitFunTy_maybe -> Just (arg, res))
-  = mkFunTy arg res
+duplicateKindArgs kind@(splitFunTy_maybe -> Just (arg, res))
+  = kind
+  -- = mkFunTy arg (mkFunTy arg $ duplicateKindArgs res)
 duplicateKindArgs args = args
 
 mutantAlgTyConRhs tyCon newTyCon (DataTyCon dataCons isEnum)

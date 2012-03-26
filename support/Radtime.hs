@@ -51,6 +51,12 @@ typeclass_NumInt_incrementalised = undefined -- will be passed to zp_incremental
 plus_incrementalised :: forall a. forall a_inc. ((forall tc. tc) -> Int_incrementalised -> Int_incrementalised -> Int_incrementalised)
 plus_incrementalised _ a b = Int_incrementalised_add a b
 
+compose_incrementalised :: forall a. forall a_inc. 
+                           forall b. forall b_inc.
+                           forall c. forall c_inc.
+                           (b_inc -> c_inc) -> (a_inc -> b_inc) -> a_inc -> c_inc
+compose_incrementalised = (.)
+
 instance Incrementalised Int_incrementalised Int where
   applyInputChange (Int_incrementalised_add a b) m = (applyInputChange a m) + (applyInputChange b m)
   applyInputChange (Int_incrementalised_replace n) _ = n
