@@ -9,5 +9,5 @@ Build-Type:     Simple
 Executable Incrementaliser
   Hs-Source-Dirs: src
   Main-Is: Main.hs
-  build-depends:  base, ghc, ghc-paths, directory
+  build-depends:  base, ghc, ghc-paths, directory, monads-tf
   ghc-options: -Werror -fwarn-unused-imports

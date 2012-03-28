@@ -1,5 +1,5 @@
 module B where
-import Radtime
+import Inctime
 
 data TryInt =  TryIntP Int
 

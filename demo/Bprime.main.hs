@@ -1,5 +1,5 @@
 import B
-import Radtime
+import Inctime
 
 main = do
   putStrLn $ show $ words_length ["abcdef", "abc"]
