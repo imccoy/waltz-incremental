@@ -1,4 +1,5 @@
-{-# LANGUAGE OverloadedStrings, ScopedTypeVariables, MultiParamTypeClasses, UndecidableInstances, Rank2Types #-}
+{-# LANGUAGE OverloadedStrings, ScopedTypeVariables, MultiParamTypeClasses, UndecidableInstances,
+             Rank2Types, FlexibleContexts #-}
 module Inctime where
 
 import Control.Monad.IO.Class
@@ -16,24 +17,25 @@ import Network.HTTP.Types
 import Network.Wai.Handler.Warp (run)
 import Text.Blaze.Renderer.Utf8 (renderHtml)
 
-class Incrementalised incrementalised base where
+class Incrementalised base incrementalised where
   isIncrementalisedReplace :: incrementalised -> Bool
   isIncrementalisedBuild :: incrementalised -> Bool
+  isIncrementalisedHoist :: incrementalised -> Bool
   isIncrementalisedIdentity :: incrementalised -> Bool
   mkIncrementalisedReplace :: base -> incrementalised
   mkIncrementalisedIdentity :: incrementalised
 
-class ApplicableIncrementalised incrementalised base where 
+class ApplicableIncrementalised base incrementalised where 
   applyInputChange  :: incrementalised -> base -> base
 
 
-class Monad_incrementalised incrementalised base where
+class Monad_incrementalised base incrementalised where
   bind_incrementalised :: incrementalised a -> (a -> incrementalised b) -> incrementalised b
   bind_discard_incrementalised :: incrementalised a -> incrementalised b -> incrementalised b
   return_incrementalised :: a -> incrementalised a
   fail :: String -> incrementalised a
 
-class Monoid_incrementalised incrementalised base where
+class Monoid_incrementalised base incrementalised where
   mempty_incrementalised :: incrementalised
   mappend_incrementalised :: incrementalised -> incrementalised -> incrementalised
   mconcat_incrementalised :: [incrementalised] -> incrementalised
@@ -54,6 +56,8 @@ compose_incrementalised = (.)
 
 
 
+class Num_incrementalised base incrementalised where
+  plus_incrementalised :: incrementalised -> incrementalised -> incrementalised
 
 
 data Char_incrementalised = Char_incrementalised_C# Char#
@@ -62,17 +66,27 @@ data Char_incrementalised = Char_incrementalised_C# Char#
                           | Char_incrementalised_hoist
   deriving Show
 
-instance ApplicableIncrementalised Char_incrementalised Char where
+instance ApplicableIncrementalised Char Char_incrementalised where
   applyInputChange (Char_incrementalised_replace n) _ = n
   applyInputChange (Char_incrementalised_identity) m = m
   applyInputChange c _ = error $ "no applyInputChange for " ++ (show c)
+
+instance Incrementalised Char Char_incrementalised where
+  isIncrementalisedReplace (Char_incrementalised_replace _) = True
+  isIncrementalisedReplace _                                = False
+  isIncrementalisedIdentity Char_incrementalised_identity = True
+  isIncrementalisedIdentity _                             = False
+  isIncrementalisedHoist Char_incrementalised_hoist = True
+  isIncrementalisedHoist _                          = False
+  mkIncrementalisedIdentity = Char_incrementalised_identity
+  mkIncrementalisedReplace = Char_incrementalised_replace
 
 data Bool_incrementalised = Bool_incrementalised_False
                           | Bool_incrementalised_True
                           | Bool_incrementalised_replace Bool
                           | Bool_incrementalised_identity
                           | Bool_incrementalised_hoist
-  deriving Show
+  deriving (Show)
 
 
 data Int_incrementalised = Int_incrementalised_I# Int#
@@ -92,11 +106,11 @@ data Double_incrementalised = Double_incrementalised_I# Double#
                          | Double_incrementalised_multiply Double_incrementalised Double_incrementalised
   deriving (Show)
 
-typeclass_NumInt_incrementalised = undefined
 typeclass_NumDouble_incrementalised = undefined
 
-plus_incrementalised :: forall a. forall a_inc. ((forall tc. tc) -> Int_incrementalised -> Int_incrementalised -> Int_incrementalised)
-plus_incrementalised _ a b = Int_incrementalised_add a b
+instance Num_incrementalised Int Int_incrementalised where
+  plus_incrementalised a b = Int_incrementalised_add a b
+
 
 typeclass_ShowInt_incrementalised = undefined 
 typeclass_ShowInteger_incrementalised = undefined
@@ -107,7 +121,7 @@ typeclass_ShowDouble_incrementalised = undefined
 show_incrementalised :: forall a. forall a_inc. ((forall tc. tc) -> a_inc -> String_incrementalised)
 show_incrementalised _ _ = undefined
 
-instance ApplicableIncrementalised Int_incrementalised Int where
+instance ApplicableIncrementalised Int Int_incrementalised where
   applyInputChange (Int_incrementalised_add a b) m = (applyInputChange a m) + (applyInputChange b m)
   applyInputChange (Int_incrementalised_replace n) _ = n
   applyInputChange (Int_incrementalised_identity) m = m
@@ -125,28 +139,72 @@ data BuiltinList_incrementalised a a_incrementalised = ZMZN_incrementalised -- e
                                               | BuiltinList_incrementalised_build_using_0 [a]
   deriving (Show)
 
-instance (ApplicableIncrementalised elem_incrementalised elem) => 
-            ApplicableIncrementalised (BuiltinList_incrementalised elem elem_incrementalised) ([elem]) where
+instance (ApplicableIncrementalised elem elem_incrementalised) => 
+            ApplicableIncrementalised ([elem]) (BuiltinList_incrementalised elem elem_incrementalised) where
   applyInputChange (BuiltinList_incrementalised hchange tchange) (h:t) = (applyInputChange hchange h):(applyInputChange tchange t)
   applyInputChange (BuiltinList_incrementalised_build_using_1 a) as = a:as
   applyInputChange (BuiltinList_incrementalised_build_using_0 as) a = a ++ as -- dubious, at best
   applyInputChange (BuiltinList_incrementalised_replace n) _ = n
   applyInputChange (BuiltinList_incrementalised_identity) m = m
 
-head_incrementalised (BuiltinList_incrementalised_build_using_1 new_head)
-  = BuiltinList_incrementalised_replace new_head
-head_incrementalised _ = error "can't do incrementalised head"
+instance (Incrementalised elem elem_incrementalised) => 
+            Incrementalised ([elem]) (BuiltinList_incrementalised elem elem_incrementalised) where
+  isIncrementalisedReplace (BuiltinList_incrementalised_replace _ ) = True
+  isIncrementalisedReplace _                                        = False
+  isIncrementalisedBuild (BuiltinList_incrementalised_build_using_0 _) = True
+  isIncrementalisedBuild (BuiltinList_incrementalised_build_using_1 _) = True
+  isIncrementalisedBuild _                                             = False
+  isIncrementalisedIdentity BuiltinList_incrementalised_identity = True
+  isIncrementalisedIdentity _                                    = False
+  isIncrementalisedHoist BuiltinList_incrementalised_hoist = True
+  isIncrementalisedHoist _                                 = False
+  mkIncrementalisedIdentity = BuiltinList_incrementalised_identity
+  mkIncrementalisedReplace e = BuiltinList_incrementalised_replace e
+
+
+-- head_incrementalised :: forall base. forall incrementalised.
+--         Inctime.Incrementalised
+--           [Char]
+--           incrementalised =>
+--         Inctime.BuiltinList_incrementalised
+--           [Char]
+--           (Inctime.BuiltinList_incrementalised Char Inctime.Char_incrementalised)
+--         -> incrementalised
+-- head_incrementalised (BuiltinList_incrementalised_build_using_1 new_head)
+--   = mkIncrementalisedReplace new_head
+-- head_incrementalised _ = error "can't do incrementalised head"
+
+--head_incrementalised :: forall base. forall incrementalised.
+--        Inctime.BuiltinList_incrementalised
+--          [Char]
+--          (Inctime.BuiltinList_incrementalised Char Inctime.Char_incrementalised)
+--        -> BuiltinList_incrementalised Char Char_incrementalised
+--head_incrementalised (BuiltinList_incrementalised_build_using_1 new_head)
+--  = (mkIncrementalisedReplace new_head) :: BuiltinList_incrementalised Char Char_incrementalised
+--head_incrementalised _ = error "can't do incrementalised head"
 --head_incrementalised (ZC_incrementalised_build_using_1 new_head :: BuiltinList_incrementalised [a] (BuiltinList_incrementalised a a_incrementalised)) = BuiltinList_incrementalised_incrementalised_replace new_head :: a_incrementalised
 --head_incrementalised _ = error "can't do incrementalised head"
+
+head_incrementalised :: forall base. forall incrementalised.
+          BuiltinList_incrementalised [Char] (BuiltinList_incrementalised Char Char_incrementalised)
+          -> BuiltinList_incrementalised Char Char_incrementalised
+head_incrementalised (BuiltinList_incrementalised_build_using_1 new_head)
+  = BuiltinList_incrementalised_replace new_head
 
 length_incrementalised :: forall a. forall a_inc. (BuiltinList_incrementalised a a_inc -> Int_incrementalised)
 length_incrementalised (BuiltinList_incrementalised_replace a)
   = Int_incrementalised_replace $ length a
 length_incrementalised (BuiltinList_incrementalised_build_using_1 _)
   = Int_incrementalised_add (Int_incrementalised_replace 1) (Int_incrementalised_identity)
+length_incrementalised (BuiltinList_incrementalised_identity)
+  = Int_incrementalised_identity
+length_incrementalised (BuiltinList_incrementalised h_change t_change)
+  = length_incrementalised t_change
+length_incrementalised (BuiltinList_incrementalised_hoist)
+  = Int_incrementalised_identity
 length_incrementalised _ = error "can't do incrementalised length"
 
-type String_incrementalised = BuiltinList_incrementalised Char_incrementalised Char
+type String_incrementalised = BuiltinList_incrementalised Char Char_incrementalised
 
 
 

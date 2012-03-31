@@ -19,7 +19,6 @@ import CoreLint
 import CoreMonad
 import CoreSyn
 import DataCon
-import Encoding
 import ErrUtils
 import HscTypes hiding (lookupDataCon, lookupType)
 import HscMain
@@ -50,6 +49,12 @@ interlace (a:as) (b:bs) = a:b:(interlace as bs)
 map2 :: (a -> c) -> (b -> d) -> [(a, b)] -> [(c, d)]
 map2 f g = map (\(a, b) -> (f a, g b))
 
+
+map2M :: Monad m => (a -> m c) -> (b -> m d) -> [(a, b)] -> m [(c, d)]
+map2M f g = mapM (\(a, b) -> do c <- f a
+                                d <- g b
+                                return (c, d)) 
+
 listWithout n list = let (before, after) = splitAt n list
                       in before ++ (tail after)
 
@@ -60,7 +65,7 @@ instance MonadFix Ghc where
 type TypeLookupM a = Reader (TypeEnv, HomePackageTable, PackageTypeEnv, DynFlags) a
 
 withTypeLookups :: TypeEnv -> TypeLookupM a -> Ghc a
-withTypeLookups typeEnv  f = do
+withTypeLookups typeEnv f = do
   session <- getSession
   eps <- liftIO $ hscEPS session -- ExternalPackageState
   let hpt = hsc_HPT session
@@ -70,19 +75,41 @@ withTypeLookups typeEnv  f = do
 lookupMutantTyCon tyCon
     -- TODO: less manky test
   | "(->)" == (nameString.getName) tyCon = return tyCon
+  | "*" == (nameString.getName) tyCon    = return tyCon
   | otherwise                            = do
     tyThing <- lookupMutantTyThing (ATyCon tyCon)
     case tyThing of
       Just (ATyCon tyCon) -> return tyCon
-      otherwise           -> error $ "Got not-a-tycon for mutant" ++ 
-                                     (showSDoc $ ppr tyCon)
+      otherwise           -> error $ "Got not-a-tycon for mutant '" ++ 
+                                     (showSDoc $ ppr tyCon) ++ "'"
 
 lookupMutantDataCon dataCon = do
   tyThing <- lookupMutantTyThing (ADataCon dataCon)
   case tyThing of
     Just (ADataCon dataCon) -> return dataCon
-    otherwise           -> error $ "Got not-a-dataCon for mutant" ++ 
-                                   (showSDoc $ ppr dataCon)
+    otherwise               -> error $ "Got not-a-dataCon for mutant '" ++ 
+                                       (showSDoc $ ppr dataCon) ++ "'"
+
+lookupMutantClass cls = do
+  tyThing <- lookupMutantTyThing (AClass cls)
+  case tyThing of
+    Just (AClass cls) -> return cls
+    otherwise         -> error $ "Got not-a-class for mutant '" ++ 
+                                 (showSDoc $ ppr cls) ++ "'"
+
+lookupMutantId_maybe id = do
+  tyThing <- lookupMutantTyThing (AnId id)
+  case tyThing of
+    Just (AnId id) -> return $ Just id
+    otherwise      -> return $ Nothing
+
+lookupMutantId id = do
+  id' <- lookupMutantId_maybe id
+  case id' of
+    Just mId -> return mId
+    otherwise -> error $ "Got not-an-id for mutant '" ++
+                         (showSDoc $ ppr id) ++ "'"
+
 
 nameString = occNameString . nameOccName
 
@@ -95,7 +122,9 @@ lookupMutantTyThing tyThing = do
 
 lookupType dflags hpt pte name -- this function substantially stolen from 
                                      -- ghc/compiler/main/HscTypes.hs
-  | not (isOneShot (ghcMode dflags)) && modulePackageId mod == this_pkg 
+  | nameHasModule name &&  
+    not (isOneShot (ghcMode dflags)) &&
+    modulePackageId mod == this_pkg 
   = do hm <- lookupUFM hpt (moduleName mod) -- Maybe monad
        lookupNameEnvString (md_types (hm_details hm)) name
   | otherwise
@@ -108,12 +137,16 @@ lookupNameEnvString pte n = listToMaybe . nameEnvElts . filterNameEnv match $ pt
                       (occNameSpace $ nameOccName $ getName thing) == 
                         (occNameSpace $ nameOccName n)
 
+nameHasModule  = isJust . nameModule_maybe
+
 mutantCoreModule mod dm = do
   coreMod <- mutantModGuts mod (dm_core_module dm)
   return dm { dm_core_module = coreMod }
+
 mutantModGuts mod mg = do
   tyEnv <- mutantTypeEnv (mg_types mg)
-  return mg { mg_binds = mutantCoreBinds (mg_binds mg)
+  coreBinds <- withTypeLookups tyEnv $ mutantCoreBinds (mg_binds mg)
+  return mg { mg_binds = coreBinds
             , mg_types = tyEnv
             , mg_dir_imps  = mutantDeps (mg_dir_imps mg) mod
             , mg_exports = mutantAvailInfos (mg_exports mg)
@@ -135,70 +168,85 @@ mutantAvailInfo i@(AvailTC name names) = [i, AvailTC (mutantName name)
                                                      (map mutantName names)]
 
 
-mutantTyThing (AnId id) = mutantId' id >>= return . AnId
-mutantTyThing (ADataCon con) = mutantDataCon' con >>= return . ADataCon
-mutantTyThing (ATyCon con) = mutantTyCon' con >>= return . ATyCon
+mutantTyThing (AnId id) = mutantId id >>= return . AnId
+mutantTyThing (ADataCon con) = mutantDataCon con >>= return . ADataCon
+mutantTyThing (ATyCon con) = mutantTyCon con >>= return . ATyCon
 mutantTyThing (AClass cls) = return $ AClass $ mutantClass cls
 
 
-mutantCoreBinds binds = concat $ map mutantCoreBind binds
+mutantCoreBinds = (fmap concat . mapM mutantCoreBind)
 
-mutantCoreBind :: CoreBind -> [CoreBind]
-mutantCoreBind corebind@(NonRec name exp) 
-  = [corebind, NonRec (mutantCoreBndr name) (mutantExp exp)]
-mutantCoreBind corebinds@(Rec name_exps)
-  = [Rec $ name_exps ++ (map2 mutantCoreBndr mutantExp name_exps)]
+mutantCoreBind corebind@(NonRec name exp) = do
+  newBind <- liftM2 NonRec (mutantCoreBndr name) (mutantExp exp)
+  return [corebind, newBind]
+mutantCoreBind corebinds@(Rec name_exps) = do
+  newNameExps <- map2M mutantCoreBndr mutantExp name_exps
+  return [Rec $ name_exps ++ newNameExps]
 
-mutantCoreBndr :: CoreBndr -> CoreBndr
 mutantCoreBndr = mutantId
 
--- Whatever idDetails is before we mutate it, it's a VanillaId afterwards. 
--- Worker/wrapper's aren't an exception, because we just mutate their 
--- names and mkDataConIDs handles the ID construction.
-mutantId var = mk var' type_'
-  where var' = (mutantName $ varName var)
-        type_' = (mutantType $ varType var)
+mutantId :: Var -> TypeLookupM Var
+mutantId var = liftM (mk var') (mutantType $ varType var)
+  where var' | List.isPrefixOf "$f" (occNameString $ nameOccName $ varName var)
+             = mutantClsName (mutantName $ varName var) $ varType var
+             | otherwise                                    
+             = (mutantName $ varName var)
         mk n t | isTcTyVar var  = mkTcTyVar n t (tcTyVarDetails var)
                | isGlobalId var = mkGlobalVar VanillaId n t vanillaIdInfo
                | isLocalVar var = local_mk    VanillaId n t vanillaIdInfo
         local_mk | isExportedId var  = mkExportedLocalVar
                  | otherwise         = mkLocalVar
 
-mutantId' var = liftM (mk var') (mutantType' $ varType var)
-  where var' = (mutantName $ varName var)
-        mk n t | isTcTyVar var  = mkTcTyVar n t (tcTyVarDetails var)
-               | isGlobalId var = mkGlobalVar VanillaId n t vanillaIdInfo
-               | isLocalVar var = local_mk    VanillaId n t vanillaIdInfo
-        local_mk | isExportedId var  = mkExportedLocalVar
-                 | otherwise         = mkLocalVar
+lookupOrMutantId :: Var -> TypeLookupM Var
+lookupOrMutantId var = do
+  var' <- lookupMutantId_maybe var
+  case var' of
+    Just v    -> return v
+    otherwise -> mutantId var
 
 
 mutantNameIntoSpace :: Name -> NameSpace -> String -> Name
-mutantNameIntoSpace oldName nameSpace suffix
-  | isInternalName oldName = mkInternalName unique occName (nameSrcSpan oldName)
-  | isExternalName oldName = mkExternalName unique (adaptModule $ 
-                                                      nameModule oldName)
-                                            occName (nameSrcSpan oldName)
-  | isWiredInName oldName  = mkSystemName unique occName 
-  | otherwise              = mkSystemName unique occName 
+mutantNameIntoSpace oldName nameSpace suffix = sameSortOfName oldName occName mod
   where oldNameString
           -- anonymous vars differ in the unique, but not the name.
           | n == "ds"              = "ds" ++ (show $ getUnique oldName)
           | n == "+"               = "plus"
           | n == "."               = "compose"
           | n == "()"              = "unit"
-          | List.isPrefixOf "$f" n = "typeclass_" ++ (zEncodeString . drop 2) n
           | List.isPrefixOf "$c" n = n ++ (show $ getUnique oldName)
           | otherwise              = n
           where n = occNameString $ nameOccName $ oldName
         nameString | oldNameString == "[]" = "BuiltinList_" ++ suffix
+                   | oldNameString == ":"  = "BuiltinList_" ++ suffix
                    | otherwise             = oldNameString ++ "_" ++ suffix
         occName = mkOccName nameSpace nameString
-        unique = getUnique occName
-        adaptModule mod | modulePackageId mod == primPackageId = inctime
-                        | modulePackageId mod == rtsPackageId  = inctime
-                        | modulePackageId mod == basePackageId = inctime
-                        | otherwise                            = mod
+
+sameSortOfName oldName occName mod
+  | isInternalName oldName = mkInternalName unique occName (nameSrcSpan oldName)
+  | isExternalName oldName = mkExternalName unique (adaptModule $ 
+                                                      nameModule oldName)
+                                            occName (nameSrcSpan oldName)
+  | isWiredInName oldName  = mkSystemName unique occName 
+  | otherwise              = mkSystemName unique occName 
+  where 
+    unique = getUnique occName
+    adaptModule mod | modulePackageId mod == primPackageId = inctime
+                    | modulePackageId mod == rtsPackageId  = inctime
+                    | modulePackageId mod == basePackageId = inctime
+                    | otherwise                            = mod
+
+
+
+mutantClsName name instanceType
+  = sameSortOfName name (mkOccName (occNameSpace $ nameOccName name) newName) (nameModule name)
+  where 
+    newName = "$f" ++ clsName' ++ concat paramNames'
+    (_, cls) = splitFunTys instanceType
+    params = tyConAppArgs cls
+    clsName' = (drop 2 $ nameString $ typeName cls) ++ "_incrementalised"
+    paramNames = map (nameString . typeName) params
+    paramNames' = interlace paramNames (map (++"_incrementalised") paramNames)
+    typeName t = getName $ tyConAppTyCon t
 
 -- in The Real World, everything lives in a monad that lets you pluck new
 -- uniques out of the unique supply. I didn't want to do that, so we
@@ -212,55 +260,80 @@ mutantNameUnique oldName nameSpace suffix
 mutantName oldName = mutantNameIntoSpace oldName
                                          (occNameSpace $ nameOccName oldName)
                                          "incrementalised"
-
-mutantExp (Var id) = Var $ mutantCoreBndr id
-mutantExp (Lit lit) = Lit lit
+mutantExp :: Expr CoreBndr -> TypeLookupM (Expr CoreBndr)
+mutantExp (Var id) = liftM Var $ lookupOrMutantId id
 mutantExp (App expr arg)
-  | isTypeArg arg = App (App (mutantExp expr) arg) (mutantExp arg)
-  | otherwise     = App (mutantExp expr) (mutantExp arg)
+  | isTypeArg arg = do expr' <- mutantExp expr
+                       arg' <- mutantExp arg
+                       return $ App (App expr' arg) arg'
+  | otherwise     = liftM2 App (mutantExp expr) (mutantExp arg)
 -- for \ a -> b, need to check if a is a (incrementalize_type a)_hoist. 
 -- If so, produce a (incrementalize_type b)_identity.
-mutantExp (Lam id expr) = expr'
-  where expr' | isTyVar id = Lam id $ Lam (mutantCoreBndr id) (mutantExp expr)
-              | otherwise  = Lam (mutantCoreBndr id)
-                                 (Case (Var $ mutantCoreBndr id)
-                                       (mutantCoreBndr id) 
-                                       oType
-                                       [def, hoist])
-        def = (DEFAULT, [], mutantExp expr)
-        hoist = (DataAlt $ lookupDataConByAdd iType AddConHoist
-                ,[]
-                ,dataConAtType (lookupDataConByAdd oType AddConIdentity)
-                               oType
-                )
-        iType = mutantType $ varType id
-        oType = exprType $ mutantExp expr
-mutantExp (Let bind expr) = foldl (\e b -> Let b e) (mutantExp expr) (mutantCoreBind bind)
-mutantExp c@(Case expr id type_ alts) = Case (mutantExp expr)
-                                             (mutantCoreBndr id)
-                                             (mutantType type_)
-                                             ((mutantAlts alts) ++
-                                              [replaceAlt c] ++
-                                              builderAlts c)
-mutantExp (Cast expr coercion) = Cast (mutantExp expr) (mutantType coercion)
-mutantExp (Type type_) = Type (mutantType type_)
-mutantExp (Note note expr) = Note note (mutantExp expr)
+mutantExp (Lam id expr) = do 
+  expr' <- mutantExp expr
+  id' <- lookupOrMutantId id
+  let iType = varType id'
+  let oType = exprType expr'
 
-mutantAlts = mapMaybe mutantAlt 
-mutantAlt (DataAlt _, [], _) = Nothing -- these cases get handled by replaceAlt
-mutantAlt (DataAlt dataCon, binds, expr) = Just (DataAlt (mutantDataCon dataCon)
-                                                ,map mutantId binds
-                                                ,mutantExp expr)
-mutantAlt (DEFAULT, [], expr) = Just (DEFAULT, [], mutantExp expr)
-mutantAlt _ = Nothing -- if we handle changes-moving-into-a-value, then we should
-                      -- probably do something for literals here
-replaceAlt c@(Case expr id type_ alts)
-  = (DataAlt $ lookupDataConByAdd (mutantType $ exprType expr) AddConReplacement
-    ,[exprVar expr]
-    ,App (dataConAtType con $ mutantType type_) c)
-  where con = lookupDataConByAdd (mutantType type_) AddConReplacement
+  let def = (DEFAULT, [], expr')
+  let hoist = (DataAlt $ lookupDataConByAdd iType AddConHoist
+              ,[]
+              ,dataConAtType (lookupDataConByAdd oType AddConIdentity)
+                             oType
+              )
+  let result | isTyVar id = Lam id $ Lam id' expr'
+             | otherwise  = Lam id'
+                                (Case (Var $ id')
+                                      id'
+                                      oType
+                                      [def, hoist])
 
-builderAlts (Case expr id type_ alts) = concatMap builderAlt alts
+  return result
+
+mutantExp (Let bind expr) = liftM2 (foldl (\e b -> Let b e))
+                                    (mutantExp expr)
+                                    (mutantCoreBind bind)
+mutantExp c@(Case expr id type_ alts) = liftM4 Case 
+                                                (mutantExp expr)
+                                                (mutantCoreBndr id)
+                                                (mutantType type_)
+                                                (liftM concat $ sequence
+                                                 [mutantAlts alts,
+                                                  -- use the list monad return
+                                                  fmap return (replaceAlt' c),
+                                                  builderAlts' c])
+mutantExp (Cast expr coercion) = liftM2 Cast
+                                         (mutantExp expr)
+                                         (mutantType coercion)
+mutantExp (Type type_) = liftM Type (mutantType type_)
+mutantExp (Note note expr) = liftM (Note note) (mutantExp expr)
+
+mutantAlts = liftM catMaybes . mapM mutantAlt
+
+mutantAlt :: Alt CoreBndr -> TypeLookupM (Maybe (Alt CoreBndr))
+mutantAlt (DataAlt _, [], _) = return Nothing -- these cases get handled by replaceAlt
+mutantAlt ((DataAlt dataCon), binds, expr) = do
+  dataCon' <- lookupMutantDataCon dataCon
+  binds' <- mapM mutantId binds
+  expr' <- mutantExp expr
+  return $ Just $ ((DataAlt dataCon'), binds', expr')
+mutantAlt (DEFAULT, [], expr) = do
+  expr' <- mutantExp expr
+  return $ Just (DEFAULT, [], expr')
+mutantAlt _ = return Nothing -- if we handle changes-moving-into-a-value, then we should
+                              -- probably do something for literals here
+                              --
+replaceAlt' c@(Case expr id type_ alts) = do
+  destType <- mutantType type_
+  srcType  <- mutantType $ exprType expr
+  let destCon = lookupDataConByAdd destType AddConReplacement
+  let srcCon  = lookupDataConByAdd srcType  AddConReplacement
+  return (DataAlt $ srcCon
+         ,[exprVar expr]
+         ,App (dataConAtType destCon destType) c)
+
+
+builderAlts' (Case expr id type_ alts) = (liftM concat . mapM builderAlt') alts
 
 -- This is all about building a new value around an old one, for instance
 -- consing an element onto the head of a list.  n is the index of the argument
@@ -283,79 +356,74 @@ builderAlts (Case expr id type_ alts) = concatMap builderAlt alts
 -- we construct replace values for each argument provided as part of the
 -- incrementalised_build constructor and assign them to the incrementalised
 -- name of the argument.
-builderAlt a@(DataAlt dataCon, binds, expr) = map (builderAlt' a) builders
+builderAlt' a@(DataAlt dataCon, binds, expr) = mapM (builderAltAtIndex' a) builders
   where builders = builderMutantDataConIndexes dataCon
 
-builderAlt' (DataAlt dataCon, vars, expr) builderConIndex
-  = (DataAlt builderCon
-    ,builderArgs
-    ,mkLets ((NonRec (mutantId replaceVar) (hoistValue replaceVar))
-             :(map (\var -> NonRec (mutantId var) (replaceValue var))
-                 builderArgs))
-            (mutantExp expr))
-  where builderCon = lookupDataConByBuilderIndex (mutantType $ type_)
-                                                 builderConIndex
-        type_ = dataConOrigResTy dataCon
+builderAltAtIndex' (DataAlt dataCon, vars, expr) builderConIndex = do
+  type_' <- mutantType type_
+  let builderCon = lookupDataConByBuilderIndex type_'
+                                               builderConIndex
+  replaceVarId <- mutantId replaceVar
+  replaceVarValue <- hoistValue replaceVar
+  builderArgsIds <- mapM mutantId builderArgs
+  builderArgsValues <- mapM replaceValue builderArgs
+  expr' <- mutantExp expr
+  return (DataAlt builderCon
+         ,builderArgs
+         ,mkLets ((NonRec replaceVarId replaceVarValue)
+                  :(map (\(id, val) -> NonRec id val)
+                        (zip builderArgsIds builderArgsValues)))
+                 expr')
+  where type_ = dataConOrigResTy dataCon
         builderArgs = listWithout builderConIndex vars
         replaceVar = vars !! builderConIndex
 
-replaceValue var = App (dataConAtType con $ mType) (Var var)
-  where mType = mutantType $ varType var
-        con = lookupDataConByAdd mType AddConReplacement
 
-hoistValue var = dataConAtType con mType
-  where con = lookupDataConByAdd mType AddConHoist
-        mType = mutantType $ varType var
 
-mutantType' :: Type -> TypeLookupM Type
-mutantType' t | trace ("looking up " ++ (showSDoc . ppr $ t)) $ False = undefined
-mutantType' (getTyVar_maybe -> Just tyVar)
-  = return $ mkTyVarTy $ mutantTyVar tyVar
-mutantType' (splitAppTy_maybe -> Just (a, b))
-  | isApp a   = liftM2 mkAppTy (mutantType' a) (mutantType' b)
-  | otherwise = liftM2 mkAppTy (mutantType' a >>= return . (`mkAppTy` b))
-                               (mutantType' b)
-  -- | otherwise = liftM2 mkAppTy (do t <- mutantType' a
+dataConValue addConType var = do
+  mType <- mutantType $ varType var
+  let con = lookupDataConByAdd mType addConType
+  return $ dataConAtType con mType
+
+hoistValue = dataConValue AddConHoist
+--replaceValue = fmap App (dataConValue AddConReplacement) . return
+replaceValue var = do
+  con <- dataConValue AddConReplacement var
+  return (App con (Var var))
+
+mutantType :: Type -> TypeLookupM Type
+mutantType (getTyVar_maybe -> Just tyVar)
+  = liftM mkTyVarTy $ mutantTyVar tyVar
+mutantType (splitAppTy_maybe -> Just (a, b))
+  | isApp a   = liftM2 mkAppTy (mutantType a) (mutantType b)
+  | otherwise = liftM2 mkAppTy (mutantType a >>= return . (`mkAppTy` b))
+                               (mutantType b)
+  -- | otherwise = liftM2 mkAppTy (do t <- mutantType a
   --                                  return $ mkAppTy t b)
   where isApp (splitTyConApp_maybe -> Just (con, _)) = isFunTyCon con
         isApp _                                      = False
 
-mutantType' (splitFunTy_maybe -> Just (a, b))
-  = liftM2 mkFunTy (mutantType' a) (mutantType' b)
-
-mutantType' (splitTyConApp_maybe -> Just (con, tys))
-  = liftM2 mkTyConApp (lookupMutantTyCon con) (mapM mutantType' tys)
-
-mutantType' (splitForAllTy_maybe -> Just (tyVar, ty)) = do
-  ty' <- mutantType' ty
-  return $ mkForAllTy tyVar $ mkForAllTy (mutantTyVar tyVar) ty'
-
-
-mutantType (getTyVar_maybe -> Just tyVar)
-  = mkTyVarTy $ mutantTyVar tyVar
-mutantType (splitAppTy_maybe -> Just (a, b))
-  | isApp a   = mkAppTy (mutantType a) (mutantType b)
-  | otherwise = mkAppTy (mkAppTy (mutantType a) b)
-                        (mutantType b)
-  where isApp (splitTyConApp_maybe -> Just (con, _)) = isFunTyCon con
-        isApp _                                      = False
-
 mutantType (splitFunTy_maybe -> Just (a, b))
-  = mkFunTy (mutantType a) (mutantType b)
+  = liftM2 mkFunTy (mutantType a) (mutantType b)
 
 mutantType (splitTyConApp_maybe -> Just (con, tys))
-  = mkTyConApp (mutantTyCon con) (map mutantType tys)
+  = liftM2 mkTyConApp (lookupMutantTyCon con) (mapM mutantType tys)
 
-mutantType (splitForAllTy_maybe -> Just (tyVar, ty))
-  = mkForAllTy tyVar $ mkForAllTy (mutantTyVar tyVar) (mutantType ty)
+mutantType (splitForAllTy_maybe -> Just (tyVar, ty)) = do
+  ty' <- mutantType ty
+  tyVar' <- mutantTyVar tyVar
+  return $ mkForAllTy tyVar $ mkForAllTy tyVar' ty'
+
+mutantTyVar v = do m <- lookupOrMutantId v
+                   let k = varType m
+                   return $ setVarType m (duplicateKindArgs k)
 
 
-mutantTyVar v = let m = mutantId v
-                    k = varType m
-                 in setVarType m (duplicateKindArgs k)
-
-mutantTyCon' tyCon = do
-  rhs <- mutantAlgTyConRhs' tyCon $ algTyConRhs tyCon
+mutantTyCon tyCon = do
+  rhs <- mutantAlgTyConRhs tyCon $ algTyConRhs tyCon
+  tyvars <- liftM (interlace (tyConTyVars tyCon))
+                       (mapM mutantTyVar $ tyConTyVars tyCon)
+  cls <- lookupMutantClass (fromJust $ tyConClass_maybe tyCon)
   let mutantClassTyCon = mkClassTyCon name kind tyvars rhs cls isRec
   let mutantAlgTyCon = mkAlgTyCon name kind tyvars predTys rhs parent 
                                   isRec hasGen declaredGadt
@@ -374,9 +442,6 @@ mutantTyCon' tyCon = do
   return newTyCon
   where
     name = mutantName $ getName tyCon
-    tyvars = interlace (tyConTyVars tyCon)
-                       (map mutantTyVar $ tyConTyVars tyCon)
-    cls = mutantClass (fromJust $ tyConClass_maybe tyCon)
     kind = duplicateKindArgs $ tyConKind tyCon
     isRec = boolToRecFlag $ isRecursiveTyCon tyCon
     predTys = tyConStupidTheta tyCon -- can we incrementalise constraints?
@@ -384,36 +449,6 @@ mutantTyCon' tyCon = do
     hasGen = tyConHasGenerics tyCon
     declaredGadt = isGadtSyntaxTyCon tyCon
 
-
-mutantTyCon tyCon = newTyCon
- where
-  newTyCon | isAlgTyCon tyCon      = mutantAlgTyCon
-           | isAbstractTyCon tyCon = makeTyConAbstract $ mutantAlgTyCon
-           | isClassTyCon tyCon    = mutantClassTyCon
-           | isFunTyCon tyCon      = mutantFunTyCon
-           | isPrimTyCon tyCon     = tyCon
-           | otherwise = trace ("Don't know how to mutate tyCon " ++ 
-                                 (showSDoc.ppr.getName$tyCon) ++
-                                  " :: " ++ (showSDoc.ppr$tyCon))
-                               tyCon
-
-  mutantClassTyCon = mkClassTyCon name kind tyvars rhs cls isRec
-  mutantAlgTyCon = mkAlgTyCon name kind tyvars predTys rhs parent 
-                              isRec hasGen declaredGadt
-  mutantFunTyCon = tyCon
-       --mkFunTyCon (mutantName $ getName tyCon) (duplicateKindArgs $ tyConKind tyCon)
-
-  name = mutantName $ getName tyCon
-  tyvars = interlace (tyConTyVars tyCon)
-                     (map mutantTyVar $ tyConTyVars tyCon)
-  rhs = mutantAlgTyConRhs tyCon newTyCon $ algTyConRhs tyCon
-  cls = mutantClass (fromJust $ tyConClass_maybe tyCon)
-  kind = duplicateKindArgs $ tyConKind tyCon
-  isRec = boolToRecFlag $ isRecursiveTyCon tyCon
-  predTys = tyConStupidTheta tyCon -- can we incrementalise constraints?
-  parent = tyConParent tyCon
-  hasGen = tyConHasGenerics tyCon
-  declaredGadt = isGadtSyntaxTyCon tyCon
 
 -- the idea here is that a kind of * -> * should become a kind of * -> * -> *, to make room
 -- for the incrementalised versions of the type parameters.
@@ -430,83 +465,54 @@ duplicateKindArgs kind@(splitFunTy_maybe -> Just (arg, res))
   -- = mkFunTy arg (mkFunTy arg $ duplicateKindArgs res)
 duplicateKindArgs args = args
 
-mutantAlgTyConRhs' tyCon (DataTyCon dataCons isEnum) = do
+mutantAlgTyConRhs tyCon (DataTyCon dataCons isEnum) = do
   newTyCon <- lookupMutantTyCon tyCon
   mutantDataCons <- mapM lookupMutantDataCon dataCons
   return $ DataTyCon (mutantDataCons ++ 
                       additionalMutantDataCons tyCon newTyCon ++
                       concatMap (builderMutantDataCons tyCon newTyCon) dataCons)
                      isEnum
-mutantAlgTyConRhs' _ (NewTyCon dataCon rhs etadRhs co) = do
+mutantAlgTyConRhs _ (NewTyCon dataCon rhs etadRhs co) = do
   dataCon' <- lookupMutantDataCon dataCon
   mutantCo <- maybe (return Nothing) ((fmap Just) . lookupMutantTyCon) co
+  etadType <- mutantEtadType etadRhs
+  type_' <- mutantType rhs
   return $ NewTyCon dataCon'
-                    (mutantType rhs)
-                    (mutantEtadType etadRhs)
+                    type_'
+                    etadType
                     mutantCo
-mutantAlgTyConRhs' _ AbstractTyCon
+mutantAlgTyConRhs _ AbstractTyCon
   = return AbstractTyCon
-mutantAlgTyConRhs' _ DataFamilyTyCon
+mutantAlgTyConRhs _ DataFamilyTyCon
   = return DataFamilyTyCon
 
-mutantAlgTyConRhs tyCon newTyCon (DataTyCon dataCons isEnum)
-  = DataTyCon (map mutantDataCon dataCons ++ 
-               additionalMutantDataCons tyCon newTyCon ++
-               concatMap (builderMutantDataCons tyCon newTyCon) dataCons)
-              isEnum
-mutantAlgTyConRhs _ _ (NewTyCon dataCon rhs etadRhs co)
-  = NewTyCon (mutantDataCon dataCon)
-             (mutantType rhs)
-             (mutantEtadType etadRhs)
-             (fmap mutantTyCon co)
-mutantAlgTyConRhs _ _ AbstractTyCon
-  = AbstractTyCon
-mutantAlgTyConRhs _ _ DataFamilyTyCon
-  = DataFamilyTyCon
-
-delay :: Monad m => m a -> m (b -> a)
-delay f = do a <- f
-             return (\_ -> a)
-
-mutantDataCon' dataCon = do
+mutantDataCon dataCon = do
   tyCon <- lookupMutantTyCon $ dataConTyCon dataCon
-  origArgTys <- mapM mutantType' $ dataConOrigArgTys dataCon
-  origResTy <- mutantType' $ dataConOrigResTy dataCon
+  origArgTys <- mapM mutantType $ dataConOrigArgTys dataCon
+  origResTy <- mutantType $ dataConOrigResTy dataCon
+  univTyVars <- liftM (interlace $ dataConUnivTyVars dataCon)
+                      (mapM mutantTyVar $ dataConUnivTyVars dataCon)
+  exTyVars <- mapM mutantTyVar $ dataConExTyVars dataCon
+  eqSpec <- map2M mutantTyVar mutantType $ dataConEqSpec dataCon
+  dcIds <- liftM2 DCIds (case dataConWrapId_maybe dataCon of
+                          Just m    -> do m' <- mutantId m
+                                          return $ Just m'
+                          otherwise -> return Nothing)
+                        (mutantId $ dataConWorkId dataCon)
   return $ mkDataCon 
     (mutantName $ dataConName dataCon)
     (dataConIsInfix dataCon)
     (dataConStrictMarks dataCon)
     (map mutantName $ dataConFieldLabels dataCon)
-    (interlace (dataConUnivTyVars dataCon)
-               (map mutantTyVar $ dataConUnivTyVars dataCon))
-    (map mutantTyVar $ dataConExTyVars dataCon)
-    (map2 mutantTyVar mutantType $ dataConEqSpec dataCon)
+    univTyVars
+    exTyVars
+    eqSpec
     (dataConDictTheta dataCon) -- dataConTheta on GHC 7.4?
     origArgTys
     origResTy
     tyCon
     (dataConStupidTheta dataCon)
-    (DCIds (fmap mutantId $ dataConWrapId_maybe dataCon)
-           (mutantId $ dataConWorkId dataCon))
-
-
-
-mutantDataCon dataCon = mkDataCon 
-  (mutantName $ dataConName dataCon)
-  (dataConIsInfix dataCon)
-  (dataConStrictMarks dataCon)
-  (map mutantName $ dataConFieldLabels dataCon)
-  (interlace (dataConUnivTyVars dataCon)
-             (map mutantTyVar $ dataConUnivTyVars dataCon))
-  (map mutantTyVar $ dataConExTyVars dataCon)
-  (map2 mutantTyVar mutantType $ dataConEqSpec dataCon)
-  (dataConDictTheta dataCon) -- dataConTheta on GHC 7.4?
-  (map mutantType $ dataConOrigArgTys dataCon)
-  (mutantType $ dataConOrigResTy dataCon)
-  (mutantTyCon $ dataConTyCon dataCon)
-  (dataConStupidTheta dataCon)
-  (DCIds (fmap mutantId $ dataConWrapId_maybe dataCon)
-         (mutantId $ dataConWorkId dataCon))
+    dcIds
 
 data AdditionalConType = AddConReplacement
                        | AddConHoist
@@ -617,7 +623,9 @@ builderMutantDataConWrapId dataCon n
 funTyConToAppTy tyCon = mkAppTys (mkTyConTy tyCon) 
                                  (map mkTyVarTy $ tyConTyVars tyCon)
 
-mutantEtadType (tyVars, type_) = (map mutantTyVar tyVars, mutantType type_)
+mutantEtadType (tyVars, type_) = liftM2 (,)
+                                         (mapM mutantTyVar tyVars)
+                                         (mutantType type_)
 
 mutantClass = id
 
