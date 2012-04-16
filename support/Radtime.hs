@@ -97,6 +97,16 @@ data Int_incrementalised = Int_incrementalised_I# Int#
                          | Int_incrementalised_multiply Int_incrementalised Int_incrementalised
   deriving (Show)
 
+instance Incrementalised Int Int_incrementalised where
+  isIncrementalisedReplace (Int_incrementalised_replace _) = True
+  isIncrementalisedReplace _                                = False
+  isIncrementalisedIdentity Int_incrementalised_identity = True
+  isIncrementalisedIdentity _                             = False
+  isIncrementalisedHoist Int_incrementalised_hoist = True
+  isIncrementalisedHoist _                          = False
+  mkIncrementalisedIdentity = Int_incrementalised_identity
+  mkIncrementalisedReplace = Int_incrementalised_replace
+
 
 data Double_incrementalised = Double_incrementalised_I# Double#
                          | Double_incrementalised_replace Double

@@ -7,10 +7,10 @@ import Control.Monad.Reader hiding (liftIO)
 import qualified Data.List as List
 import Data.Maybe
 import Debug.Trace
+import Safe
 import System.Environment (getArgs)
 import System.Exit
 
-import Outputable
 
 import Bag
 import BasicTypes 
@@ -19,6 +19,7 @@ import CoreLint
 import CoreMonad
 import CoreSyn
 import DataCon
+import DynFlags
 import ErrUtils
 import HscTypes hiding (lookupDataCon, lookupType)
 import HscMain
@@ -30,6 +31,7 @@ import Name hiding (varName)
 import NameEnv hiding (lookupNameEnv)
 import OccName hiding (varName)
 import qualified OccName as OccName
+import Outputable
 import StaticFlags
 import TyCon
 import Type
@@ -37,8 +39,6 @@ import TysWiredIn
 import Unique
 import UniqFM
 import Var
-
-import DynFlags
 
 import GHC hiding (exprType)
 
@@ -141,6 +141,14 @@ lookupMutantId id = do
 
 nameString = occNameString . nameOccName
 
+lookupTypeM :: (Maybe Module) -> 
+               (NameEnv TyThing -> Maybe TyThing) -> 
+               TypeLookupM (Maybe TyThing)
+lookupTypeM maybeMod lookup = do
+  (_,hpt,pte,dflags) <- ask
+  return $ lookupType dflags hpt pte maybeMod lookup
+
+
 lookupType dflags hpt pte maybeMod lookup -- this function substantially stolen from 
                                       -- ghc/compiler/main/HscTypes.hs
   | isJust maybeMod &&  
@@ -150,7 +158,7 @@ lookupType dflags hpt pte maybeMod lookup -- this function substantially stolen 
        lookup (md_types (hm_details hm))
   | otherwise
   = lookup pte
-  where mod = fromJust maybeMod
+  where mod = fromJustNote "lookupType module" maybeMod
         this_pkg = thisPackage dflags
 
 lookupNameEnv n pte = lookupNameEnvString (nameString n) (occNameSpace . nameOccName $ n) pte
@@ -231,20 +239,22 @@ lookupOrMutantId var = do
 
 
 mutantNameIntoSpace :: Name -> NameSpace -> String -> Name
-mutantNameIntoSpace oldName nameSpace suffix = sameSortOfName oldName occName mod
-  where oldNameString
-          -- anonymous vars differ in the unique, but not the name.
-          | n == "ds"              = "ds" ++ (show $ getUnique oldName)
-          | n == "+"               = "plus"
-          | n == "."               = "compose"
-          | n == "()"              = "unit"
-          | List.isPrefixOf "$c" n = n ++ (show $ getUnique oldName)
-          | otherwise              = n
-          where n = occNameString $ nameOccName $ oldName
-        nameString | oldNameString == "[]" = "BuiltinList_" ++ suffix
-                   | oldNameString == ":"  = "BuiltinList_" ++ suffix
-                   | otherwise             = oldNameString ++ "_" ++ suffix
-        occName = mkOccName nameSpace nameString
+mutantNameIntoSpace oldName nameSpace suffix
+  = sameSortOfName oldName occName mod
+  where 
+    nameString = (adaptName oldName) ++ "_" ++ suffix
+    occName = mkOccName nameSpace nameString
+
+adaptName name = adaptName' $ occNameString $ nameOccName name
+  where adaptName' "ds" = "ds" ++ (show $ getUnique name)
+        adaptName' "+"  = "plus"
+        adaptName' "."  = "compose"
+        adaptName' "()" = "unit"
+        adaptName' "[]" = "BuiltinList"
+        adaptName' ":" = "BuiltinList"
+        adaptName' s 
+          | List.isPrefixOf "$c" s = s ++ (show $ getUnique name)
+          | otherwise              = s
 
 sameSortOfName oldName occName mod
   | isInternalName oldName = mkInternalName unique occName (nameSrcSpan oldName)
@@ -255,11 +265,47 @@ sameSortOfName oldName occName mod
   | otherwise              = mkSystemName unique occName 
   where 
     unique = getUnique occName
-    adaptModule mod | modulePackageId mod == primPackageId = inctime
-                    | modulePackageId mod == rtsPackageId  = inctime
-                    | modulePackageId mod == basePackageId = inctime
-                    | otherwise                            = mod
 
+adaptModule mod | modulePackageId mod == primPackageId = inctime
+                | modulePackageId mod == rtsPackageId  = inctime
+                | modulePackageId mod == basePackageId = inctime
+                | otherwise                            = mod
+
+varIncrementalisedDictionary :: Var -> TypeLookupM Var
+varIncrementalisedDictionary var = 
+  liftM (\t -> mkLocalVar VanillaId
+                    (mutantNameIntoSpace (varName var)
+                                      OccName.varName
+                                      "incrementalisedD")
+                    t
+                    vanillaIdInfo) $
+         incrementalisedDictionaryType
+
+expIncrementalisedDictionary (Var v)
+  = liftM Var $ varIncrementalisedDictionary v
+expIncrementalisedDictionary (Type t)
+  | isTyVarTy t
+  = liftM (Type . mkTyVarTy) $ varIncrementalisedDictionary 
+                  $ getTyVar "shouldn't ever happen" t
+  | otherwise
+  = liftM Var $ incrementalisedDictionaryInstance t
+
+incrementalisedDictionaryType :: TypeLookupM Type
+incrementalisedDictionaryType = liftM (mkTyConTy . tyThingTyCon . fromJustNote
+                                        ("The type of the Incrementalised "++
+                                         " typeclass dictionary"))
+                                      (lookupInctimeTyThing "T:Incrementalised"
+                                                            OccName.tcName)
+incrementalisedDictionaryInstance :: Type -> TypeLookupM Var
+incrementalisedDictionaryInstance type_
+  = liftM (tyThingId . fromJustNote ("incrementalisedDictionaryInstance for " ++
+                                     (showSDoc $ ppr type_)))
+          (lookupTypeM (fmap adaptModule $ nameModule_maybe oldName)
+                       (lookupNameEnvString (occNameString mName)
+                                            (occNameSpace mName)))
+  where (oldName, mName) = incrementalisedDictionaryInstanceName
+                                (OccName.varName)
+                                type_
 
 clsOccName space clsName params  = mkOccName space newName
   where
@@ -268,13 +314,44 @@ clsOccName space clsName params  = mkOccName space newName
     paramNames' = interlace paramNames (map (++"_incrementalised") paramNames)
 
 mutantClsName name instanceType
-  = sameSortOfName name 
-                   (clsOccName (occNameSpace $ nameOccName name) clsName' params)
+  = sameSortOfName name
+                   (mutantClsOccName (occNameSpace $ nameOccName name)
+                                     instanceType)
                    (nameModule name)
+
+mutantClsOccName nameSpace instanceType = clsOccName nameSpace clsName' params
   where 
     (_, cls) = splitFunTys instanceType
-    params = map tyConAppTyCon $ tyConAppArgs cls
-    clsName' = (drop 2 $ nameString $ getName $ tyConAppTyCon cls) ++ "_incrementalised"
+    (clsTy, paramsTys) = maybe (error $ "mutantClsOccName couldn't split " ++
+                                        (showSDoc $ ppr cls))
+                               id
+                               $ splitTyConApp_maybe cls
+    baseName = getName $ clsTy
+    params = map (\t -> maybe (error $ "mutantClsOccName couldn't split " ++
+                                       (showSDoc $ ppr cls) ++
+                                       " at arg " ++
+                                       (showSDoc $ ppr t))
+                              fst
+                              (splitTyConApp_maybe t))
+                 paramsTys
+    clsNameString = nameString $ baseName
+    clsName' = (drop 2 $ clsNameString) ++ "_incrementalised"
+
+incrementalisedDictionaryInstanceName nameSpace instanceType
+  = (baseName, mkOccName nameSpace $
+                         "$fIncrementalised" ++ 
+                         (nameString baseName) ++ 
+                         (adaptName baseName) ++
+                         "_incrementalised")
+  where 
+    (_, cls) = splitFunTys instanceType
+    (clsTy, _) = maybe (error $"incrementalisedDictionaryInstanceName"++
+                                       " couldn't split " ++
+                                       (showSDoc $ ppr cls))
+                               id
+                               $ splitTyConApp_maybe cls
+    baseName = getName $ clsTy
+
 
 -- in The Real World, everything lives in a monad that lets you pluck new
 -- uniques out of the unique supply. I didn't want to do that, so we
@@ -293,13 +370,16 @@ mutantExp (Var id) = liftM Var $ lookupOrMutantId id
 mutantExp (App expr arg)
   | isTypeArg arg = do expr' <- mutantExp expr
                        arg' <- mutantExp arg
-                       return $ App (App expr' arg) arg'
+                       argD <- expIncrementalisedDictionary arg
+                       return $ App (App (App expr' arg) arg') argD
+                       --return $ App (App expr' arg) arg'
   | otherwise     = liftM2 App (mutantExp expr) (mutantExp arg)
 -- for \ a -> b, need to check if a is a (incrementalize_type a)_hoist. 
 -- If so, produce a (incrementalize_type b)_identity.
 mutantExp (Lam id expr) = do 
   expr' <- mutantExp expr
   id' <- lookupOrMutantId id
+  idD <- varIncrementalisedDictionary id
   let iType = varType id'
   let oType = exprType expr'
 
@@ -309,7 +389,7 @@ mutantExp (Lam id expr) = do
               ,dataConAtType (lookupDataConByAdd oType AddConIdentity)
                              oType
               )
-  let result | isTyVar id = Lam id $ Lam id' expr'
+  let result | isTyVar id = Lam id $ Lam id' $ Lam idD expr'
              | otherwise  = Lam id'
                                 (Case (Var $ id')
                                       id'
@@ -339,7 +419,7 @@ mutantExp (Note note expr) = liftM (Note note) (mutantExp expr)
 mutantAlts = liftM catMaybes . mapM mutantAlt
 
 mutantAlt :: Alt CoreBndr -> TypeLookupM (Maybe (Alt CoreBndr))
-mutantAlt (DataAlt _, [], _) = return Nothing -- these cases get handled by replaceAlt
+mutantAlt (DataAlt _, [], _) = return Nothing -- handled by replaceAlt
 mutantAlt ((DataAlt dataCon), binds, expr) = do
   dataCon' <- lookupMutantDataCon dataCon
   binds' <- mapM mutantId binds
@@ -348,9 +428,8 @@ mutantAlt ((DataAlt dataCon), binds, expr) = do
 mutantAlt (DEFAULT, [], expr) = do
   expr' <- mutantExp expr
   return $ Just (DEFAULT, [], expr')
-mutantAlt _ = return Nothing -- if we handle changes-moving-into-a-value, then we should
-                              -- probably do something for literals here
-                              --
+mutantAlt _ = return Nothing -- if we handle changes-moving-into-a-value, then
+                             -- we should probably do something  here
 replaceAlt' c@(Case expr id type_ alts) = do
   destType <- mutantType type_
   srcType  <- mutantType $ exprType expr
@@ -384,7 +463,8 @@ builderAlts' (Case expr id type_ alts) = (liftM concat . mapM builderAlt') alts
 -- we construct replace values for each argument provided as part of the
 -- incrementalised_build constructor and assign them to the incrementalised
 -- name of the argument.
-builderAlt' a@(DataAlt dataCon, binds, expr) = mapM (builderAltAtIndex' a) builders
+builderAlt' a@(DataAlt dataCon, binds, expr) = mapM (builderAltAtIndex' a)
+                                                    builders
   where builders = builderMutantDataConIndexes dataCon
 
 builderAltAtIndex' (DataAlt dataCon, vars, expr) builderConIndex = do
@@ -442,7 +522,8 @@ mutantType (splitTyConApp_maybe -> Just (con, tys))
 mutantType (splitForAllTy_maybe -> Just (tyVar, ty)) = do
   ty' <- mutantType ty
   tyVar' <- mutantTyVar tyVar
-  return $ mkForAllTy tyVar $ mkForAllTy tyVar' ty'
+  incDType <- incrementalisedDictionaryType
+  return $ mkForAllTy tyVar $ mkForAllTy tyVar' (mkFunTy incDType ty')
 
 mutantTyVar v = do m <- lookupOrMutantId v
                    let k = varType m
@@ -458,7 +539,6 @@ mutantTyCon tyCon = do
   let mutantAlgTyCon = mkAlgTyCon name kind tyvars predTys rhs parent 
                                   isRec hasGen declaredGadt
   let mutantFunTyCon = tyCon
-   --mkFunTyCon (mutantName $ getName tyCon) (duplicateKindArgs $ tyConKind tyCon)
  
   let newTyCon | isAlgTyCon tyCon      = mutantAlgTyCon
                | isAbstractTyCon tyCon = makeTyConAbstract $ mutantAlgTyCon
@@ -487,43 +567,51 @@ mutantTyCon tyCon = do
 classBind :: TyCon -> TyCon -> TypeLookupM (CoreBind)
 classBind tyCon mutantTyCon = do
   classDataCon <-  fmap (tyThingDataCon . fromJust) $ 
-                        lookupInctimeTyThing "D:Incrementalised" OccName.dataName
+                        lookupInctimeTyThing "D:Incrementalised"
+                                             OccName.dataName
 
   let classDataConExp = mkApps (Var $ dataConWrapId classDataCon)
                                (map Type [baseType, incrementalisedType])
-  let classInstanceId = mkGlobalVar VanillaId
-                                    classInstanceName
-                                    (mkForAllTys (tyConTyVars mutantTyCon)
-                                                 (mkTyConApp (dataConTyCon classDataCon)
-                                                             [baseType
-                                                             ,incrementalisedType]))
-                                    vanillaIdInfo
-  let mkTestAlts alts = Lam (testVar 0) $
-                          Case (Var $ testVar 0)
-                               (testVar 0)
-                               (mkTyConTy boolTyCon)
-                               ((DEFAULT, [], Var falseDataConId):alts)
-  let mkTest addConType argTypes = mkTestAlts $ [(DataAlt $ lookupDataConByAdd (mkTyConTy mutantTyCon)
-                                                                                addConType
-                                                 , testArgVars argTypes
-                                                 , Var trueDataConId)]
+  let classInstanceId
+        = mkGlobalVar VanillaId
+                      classInstanceName
+                      (mkForAllTys (tyConTyVars mutantTyCon)
+                                   (mkTyConApp (dataConTyCon classDataCon)
+                                               [baseType
+                                               ,incrementalisedType]))
+                      vanillaIdInfo
+  let mkTestAlts alts
+        = Lam (testVar 0) $
+            Case (Var $ testVar 0)
+                 (testVar 0)
+                 (mkTyConTy boolTyCon)
+                 ((DEFAULT, [], Var falseDataConId):alts)
+  let mkTest addConType argTypes
+        = mkTestAlts $ [(DataAlt $ lookupDataConByAdd (mkTyConTy mutantTyCon)
+                                                      addConType
+                       , testArgVars argTypes
+                       , Var trueDataConId)]
   let isReplace = mkTest AddConReplacement [baseType] 
   let isHoist = mkTest AddConHoist []
-  let buildAlts = concat (map (\dataCon -> map (\idx -> (let builderCon = lookupDataConByBuilderIndex
-                                                                           (mkTyConTy mutantTyCon)
-                                                                           (idx)
-                                                          in (DataAlt builderCon,
-                                                               testArgVars (dataConOrigArgTys builderCon),
-                                                               Var trueDataConId)))
-                                               (builderMutantDataConIndexes dataCon))
-                              (tyConDataCons tyCon))
+  let buildAlts
+        = concat (map (\dataCon -> 
+                         map (\idx -> 
+                                let builderCon = lookupDataConByBuilderIndex
+                                                         (mkTyConTy mutantTyCon)
+                                                         (idx)
+                                 in (DataAlt builderCon
+                                    ,testArgVars (dataConOrigArgTys builderCon)
+                                    ,Var trueDataConId))
+                             (builderMutantDataConIndexes dataCon))
+                 (tyConDataCons tyCon))
   let isBuild = mkTestAlts buildAlts
   let isIdentity = mkTest AddConIdentity []
 
-  let mkBuilder addConType argTypes = mkLams (testArgVars argTypes)
-                                             (mkApps (dataConValueByType addConType (mkTyConTy mutantTyCon))
-                                                     (map (Type . mkTyVarTy) (tyConTyVars mutantTyCon) ++
-                                                      map Var (testArgVars argTypes)))
+  let mkBuilder addConType argTypes
+        = mkLams (testArgVars argTypes)
+                 (mkApps (dataConValueByType addConType (mkTyConTy mutantTyCon))
+                         (map (Type . mkTyVarTy) (tyConTyVars mutantTyCon) ++
+                          map Var (testArgVars argTypes)))
 
   let mkReplace = mkBuilder AddConReplacement [baseType]
   let mkIdentity = mkBuilder AddConIdentity []
@@ -539,37 +627,43 @@ classBind tyCon mutantTyCon = do
   where classInstanceName = sameSortOfName
                               (getName tyCon)
                               (clsOccName OccName.varName
-                                          ("Incrementalised" ++ (nameString $ getName tyCon))
+                                          ("Incrementalised" ++
+                                           (nameString $ getName tyCon))
                                           ([] :: [TyCon]))
                               (nameModule $ getName tyCon)
         baseName = (nameString $ classInstanceName)
         testVar = testArgVar incrementalisedType
         testArgVar type_ n = mkLocalVar VanillaId 
-                                     (mkInternalName (getUnique $ testVarOccName n) 
-                                                     (testVarOccName n)
+                                     (mkInternalName (getUnique $ tvn) 
+                                                     tvn
                                                      noSrcSpan)
                                      type_
                                      vanillaIdInfo
+          where tvn = testVarOccName n
         testArgVars types = zipWith testArgVar types [1..]
         testVarOccName n = mkOccName OccName.varName
                                         (baseName ++ "_test" ++ show n)
         baseType = mkTyConApp tyCon 
                                (map mkTyVarTy $ tyConTyVars tyCon)
-        incrementalisedType = mkTyConApp mutantTyCon
-                                        (map mkTyVarTy $ tyConTyVars mutantTyCon)
+        incrementalisedType
+          = mkTyConApp mutantTyCon
+                       (map mkTyVarTy $ tyConTyVars mutantTyCon)
 
 
 
 
 
--- the idea here is that a kind of * -> * should become a kind of * -> * -> *, to make room
--- for the incrementalised versions of the type parameters.
+-- the idea here is that a kind of * -> * should become a kind of * -> * -> *, 
+-- to make room for the incrementalised versions of the type parameters.
 duplicateKindArgs (splitTyConApp_maybe -> Just (tyCon, []))
   = mkTyConApp tyCon [] 
--- if we go from TyConApp to TyConApp, then we get a (-> * * *) rather than a (* -> * -> *).
+-- if we go from TyConApp to TyConApp, then we get a (-> * * *) rather than 
+-- a (* -> * -> *).
 -- Going from TyConApp to FunTy doesn't seem to have that problem.
 duplicateKindArgs (splitTyConApp_maybe -> Just (tyCon, kinds))
-  = foldl (flip mkFunTy) (head argKinds) $ (tail argKinds) ++ argKinds ++ [resultKind]
+  = foldl (flip mkFunTy) (head argKinds) $ (tail argKinds) ++ 
+                                           argKinds ++ 
+                                           [resultKind]
   --foldr mkFunTy (resultKind) $ argKinds ++ argKinds ???
   where (resultKind:(reverse -> argKinds)) = reverse kinds
 duplicateKindArgs kind@(splitFunTy_maybe -> Just (arg, res))
@@ -862,8 +956,13 @@ main = do
 
 showAllModulesContents :: Ghc ()
 showAllModulesContents = do
-  getSession >>= return . eltsUFM . hsc_HPT >>= mapM (showAllModuleContents . md_types . hm_details)
-  getSession >>= liftIO . hscEPS >>= (return . eps_PTE) >>= showAllModuleContents
+  getSession >>= return . eltsUFM . hsc_HPT >>= mapM (showAllModuleContents . 
+                                                      md_types . 
+                                                      hm_details)
+  getSession >>= 
+    liftIO . hscEPS >>=
+    return . eps_PTE >>= 
+    showAllModuleContents
 
 showAllModuleContents mod = do
   liftIO $ putStrLn $ showSDoc $ ppr $ eltsUFM mod
