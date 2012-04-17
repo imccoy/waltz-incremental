@@ -151,10 +151,17 @@ lookupTypeM :: (Maybe Module) ->
                (NameEnv TyThing -> Maybe TyThing) -> 
                TypeLookupM (Maybe TyThing)
 lookupTypeM maybeMod lookup = do
-  (_,hpt,pte,dflags) <- ask
-  return $ lookupType dflags hpt pte maybeMod lookup
+  (env,hpt,pte,dflags) <- ask
+  return $ case lookup env of
+             v@(Just _) -> v
+             otherwise -> lookupType dflags hpt pte maybeMod lookup
 
-
+lookupType :: DynFlags 
+           -> HomePackageTable
+           -> PackageTypeEnv
+           -> Maybe Module
+           -> (PackageTypeEnv  -> Maybe TyThing)
+           -> Maybe TyThing
 lookupType dflags hpt pte maybeMod lookup -- this function substantially stolen from 
                                       -- ghc/compiler/main/HscTypes.hs
   | isJust maybeMod &&  
@@ -167,9 +174,14 @@ lookupType dflags hpt pte maybeMod lookup -- this function substantially stolen 
   where mod = fromJustNote "lookupType module" maybeMod
         this_pkg = thisPackage dflags
 
-lookupNameEnv n pte = lookupNameEnvString (nameString n) (occNameSpace . nameOccName $ n) pte
+lookupNameEnv :: Name -> TypeEnv -> Maybe TyThing
+lookupNameEnv n pte = lookupNameEnvString (nameString n)
+                                          (occNameSpace . nameOccName $ n)
+                                          pte
 
-lookupNameEnvString n space pte = listToMaybe . nameEnvElts . filterNameEnv match $ pte
+lookupNameEnvString :: String -> NameSpace -> TypeEnv -> Maybe TyThing
+lookupNameEnvString n space pte
+  = listToMaybe . nameEnvElts . filterNameEnv match $ pte
   where match thing = (nameString $ getName thing) == n &&
                       (occNameSpace $ nameOccName $ getName thing) == space
 
@@ -191,8 +203,9 @@ mutantModGuts mod mg = do
 mutantTypeEnv env = do
   rec { (result, classBinds) <- withTypeLookups result $ do
           elt_classBinds <- mapM mutantTyThing $ typeEnvElts env
-          let newElts = map fst elt_classBinds
           let classBinds = concatMap snd elt_classBinds
+          let newElts = map fst elt_classBinds ++
+                        map AnId (bindersOfBinds classBinds)
           return (extendTypeEnvList env newElts, classBinds)
       }
   return (result, classBinds)
@@ -316,10 +329,20 @@ incrementalisedDictionaryType baseType incrementalisedType = do
                                      OccName.tcName)
   return $ mkAppTys inc [baseType, incrementalisedType]
 
+incrementalisedTest n
+  = liftM (tyThingId . fromJustNote ("incrementalised" ++ n ++ "Test"))
+          (lookupInctimeTyThing ("isIncrementalised" ++ n)
+                                OccName.varName)
+incrementalisedReplaceTest :: TypeLookupM Var
+incrementalisedReplaceTest = incrementalisedTest "Replace"
+incrementalisedHoistTest :: TypeLookupM Var
+incrementalisedHoistTest = incrementalisedTest "Hoist"
+
 incrementalisedDictionaryInstance :: Type -> TypeLookupM Var
 incrementalisedDictionaryInstance type_
   = liftM (tyThingId . fromJustNote ("incrementalisedDictionaryInstance for " ++
-                                     (showSDoc $ ppr type_)))
+                                     (showSDoc $ ppr type_) ++ " " ++
+                                     (showSDoc $ ppr mName)))
           (lookupTypeM (fmap adaptModule $ nameModule_maybe oldName)
                        (lookupNameEnvString (occNameString mName)
                                             (occNameSpace mName)))
@@ -329,7 +352,8 @@ incrementalisedDictionaryInstance type_
 
 clsOccName space clsName params  = mkOccName space newName
   where
-    newName = "$f" ++ clsName ++ concat paramNames'
+    newName = "$f" ++ clsName ++ 
+              concat paramNames'
     paramNames = map (nameString . getName) params
     paramNames' = interlace paramNames (map (++"_incrementalised") paramNames)
 
@@ -403,16 +427,28 @@ mutantExp (Lam id expr) = do
   let iType = varType id'
   let oType = exprType expr'
 
+  test <- liftM2 mkApps (liftM Var incrementalisedHoistTest)
+                        (return [Type (varType id)
+                                , Type iType
+                                , Var idD
+                                , Var id'])
+  idDvalue <- expIncrementalisedDictionary $ Type $ varType id
+  let lets = [NonRec idD idDvalue]
+                
+
   let def = (DEFAULT, [], expr')
-  let hoist = (DataAlt $ lookupDataConByAdd iType AddConHoist
+
+  let hoist = (DataAlt trueDataCon
               ,[]
               ,dataConAtType (lookupDataConByAdd oType AddConIdentity)
                              oType
               )
   let result | isTyVar id = Lam id $ Lam id' $ Lam idD expr'
-             | otherwise  = Lam id'
-                                (Case (Var $ id')
-                                      id'
+             | otherwise  = Lam id' $ mkLets lets $
+                                (Case test
+                                      (testArgVar (nameString $ varName id')
+                                                  (mkTyConTy boolTyCon)
+                                                  0)
                                       oType
                                       [def, hoist])
 
@@ -648,21 +684,14 @@ classBind tyCon mutantTyCon = do
                               (getName tyCon)
                               (clsOccName OccName.varName
                                           ("Incrementalised" ++
-                                           (nameString $ getName tyCon))
+                                           (nameString $ getName tyCon) ++
+                                           (nameString $ getName tyCon) ++
+                                           "_incrementalised")
                                           ([] :: [TyCon]))
                               (nameModule $ getName tyCon)
         baseName = (nameString $ classInstanceName)
-        testVar = testArgVar incrementalisedType
-        testArgVar type_ n = mkLocalVar VanillaId 
-                                     (mkInternalName (getUnique $ tvn) 
-                                                     tvn
-                                                     noSrcSpan)
-                                     type_
-                                     vanillaIdInfo
-          where tvn = testVarOccName n
-        testArgVars types = zipWith testArgVar types [1..]
-        testVarOccName n = mkOccName OccName.varName
-                                        (baseName ++ "_test" ++ show n)
+        testVar = testArgVar baseName incrementalisedType
+        testArgVars types = zipWith (testArgVar baseName) types [1..]
         baseType = mkTyConApp tyCon 
                                (map mkTyVarTy $ tyConTyVars tyCon)
         incrementalisedType
@@ -670,6 +699,15 @@ classBind tyCon mutantTyCon = do
                        (map mkTyVarTy $ tyConTyVars mutantTyCon)
 
 
+testArgVar baseName type_ n = mkLocalVar VanillaId 
+                                (mkInternalName (getUnique $ tvn) 
+                                                tvn
+                                                noSrcSpan)
+                                type_
+                                vanillaIdInfo
+  where tvn = testVarOccName n baseName
+testVarOccName n baseName = mkOccName OccName.varName
+                                      (baseName ++ "_test" ++ show n)
 
 
 
@@ -948,6 +986,7 @@ process targetFile moduleName = do
       d <- desugarModule t
       d' <- mutantCoreModule (ms_mod modSum) d
       liftIO $ do
+        showAllModuleContents $ mg_types $ dm_core_module $ d'
         putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d'
         putStrLn $ ms_hspp_file modSum
 

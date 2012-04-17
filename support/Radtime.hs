@@ -78,6 +78,7 @@ instance Incrementalised Char Char_incrementalised where
   isIncrementalisedIdentity _                             = False
   isIncrementalisedHoist Char_incrementalised_hoist = True
   isIncrementalisedHoist _                          = False
+  isIncrementalisedBuild _ = False
   mkIncrementalisedIdentity = Char_incrementalised_identity
   mkIncrementalisedReplace = Char_incrementalised_replace
 
@@ -87,6 +88,17 @@ data Bool_incrementalised = Bool_incrementalised_False
                           | Bool_incrementalised_identity
                           | Bool_incrementalised_hoist
   deriving (Show)
+
+instance Incrementalised Bool Bool_incrementalised where
+  isIncrementalisedReplace (Bool_incrementalised_replace _) = True
+  isIncrementalisedReplace _                                = False
+  isIncrementalisedIdentity Bool_incrementalised_identity = True
+  isIncrementalisedIdentity _                             = False
+  isIncrementalisedHoist Bool_incrementalised_hoist = True
+  isIncrementalisedHoist _                          = False
+  isIncrementalisedBuild _ = False
+  mkIncrementalisedIdentity = Bool_incrementalised_identity
+  mkIncrementalisedReplace = Bool_incrementalised_replace
 
 
 data Int_incrementalised = Int_incrementalised_I# Int#
@@ -104,6 +116,7 @@ instance Incrementalised Int Int_incrementalised where
   isIncrementalisedIdentity _                             = False
   isIncrementalisedHoist Int_incrementalised_hoist = True
   isIncrementalisedHoist _                          = False
+  isIncrementalisedBuild _ = False
   mkIncrementalisedIdentity = Int_incrementalised_identity
   mkIncrementalisedReplace = Int_incrementalised_replace
 
@@ -208,7 +221,10 @@ head_incrementalised :: forall base. forall incrementalised.
 head_incrementalised (BuiltinList_incrementalised_build_using_1 new_head)
   = BuiltinList_incrementalised_replace new_head
 
-length_incrementalised :: forall a. forall a_inc. (Incrementalised a a_inc => BuiltinList_incrementalised a a_inc -> Int_incrementalised)
+length_incrementalised :: forall a.
+                          forall a_inc.
+                          Incrementalised a a_inc => 
+                          BuiltinList_incrementalised a a_inc -> Int_incrementalised
 length_incrementalised (BuiltinList_incrementalised_replace a)
   = Int_incrementalised_replace $ length a
 length_incrementalised (BuiltinList_incrementalised_build_using_1 _)
