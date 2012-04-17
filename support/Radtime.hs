@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings, ScopedTypeVariables, MultiParamTypeClasses, UndecidableInstances,
-             Rank2Types, FlexibleContexts #-}
+             Rank2Types, FunctionalDependencies, FlexibleContexts #-}
 module Inctime where
 
 import Control.Monad.IO.Class
@@ -17,7 +17,7 @@ import Network.HTTP.Types
 import Network.Wai.Handler.Warp (run)
 import Text.Blaze.Renderer.Utf8 (renderHtml)
 
-class Incrementalised base incrementalised where
+class Incrementalised base incrementalised | incrementalised -> base where
   isIncrementalisedReplace :: incrementalised -> Bool
   isIncrementalisedBuild :: incrementalised -> Bool
   isIncrementalisedHoist :: incrementalised -> Bool
@@ -56,8 +56,8 @@ compose_incrementalised = (.)
 
 
 
-class Num_incrementalised base incrementalised where
-  plus_incrementalised :: incrementalised -> incrementalised -> incrementalised
+class Num_incrementalised base incrementalised | incrementalised -> base where
+  plus_incrementalised_wrongcc :: incrementalised -> incrementalised -> incrementalised
 
 
 data Char_incrementalised = Char_incrementalised_C# Char#
@@ -119,8 +119,14 @@ data Double_incrementalised = Double_incrementalised_I# Double#
 typeclass_NumDouble_incrementalised = undefined
 
 instance Num_incrementalised Int Int_incrementalised where
-  plus_incrementalised a b = Int_incrementalised_add a b
+  plus_incrementalised_wrongcc a b = Int_incrementalised_add a b
 
+plus_incrementalised
+  :: (Incrementalised base incrementalised
+     ,Num_incrementalised base incrementalised
+     ) =>
+     incrementalised -> incrementalised -> incrementalised
+plus_incrementalised = plus_incrementalised_wrongcc
 
 typeclass_ShowInt_incrementalised = undefined 
 typeclass_ShowInteger_incrementalised = undefined
@@ -196,12 +202,13 @@ instance (Incrementalised elem elem_incrementalised) =>
 --head_incrementalised _ = error "can't do incrementalised head"
 
 head_incrementalised :: forall base. forall incrementalised.
-          BuiltinList_incrementalised [Char] (BuiltinList_incrementalised Char Char_incrementalised)
+         Incrementalised [Char] (BuiltinList_incrementalised Char Char_incrementalised)
+          => BuiltinList_incrementalised [Char] (BuiltinList_incrementalised Char Char_incrementalised)
           -> BuiltinList_incrementalised Char Char_incrementalised
 head_incrementalised (BuiltinList_incrementalised_build_using_1 new_head)
   = BuiltinList_incrementalised_replace new_head
 
-length_incrementalised :: forall a. forall a_inc. (BuiltinList_incrementalised a a_inc -> Int_incrementalised)
+length_incrementalised :: forall a. forall a_inc. (Incrementalised a a_inc => BuiltinList_incrementalised a a_inc -> Int_incrementalised)
 length_incrementalised (BuiltinList_incrementalised_replace a)
   = Int_incrementalised_replace $ length a
 length_incrementalised (BuiltinList_incrementalised_build_using_1 _)

@@ -47,6 +47,12 @@ interlace :: [a] -> [a] -> [a]
 interlace [] [] = []
 interlace (a:as) (b:bs) = a:b:(interlace as bs)
 
+interlace3 as bs cs = interlaceN [as, bs, cs]
+
+interlaceN [] = []
+interlaceN ([]:_) = []
+interlaceN ((a:as):xs) = a:(interlaceN $ xs ++ [as])
+
 map2 :: (a -> c) -> (b -> d) -> [(a, b)] -> [(c, d)]
 map2 f g = map (\(a, b) -> (f a, g b))
 
@@ -271,31 +277,45 @@ adaptModule mod | modulePackageId mod == primPackageId = inctime
                 | modulePackageId mod == basePackageId = inctime
                 | otherwise                            = mod
 
-varIncrementalisedDictionary :: Var -> TypeLookupM Var
-varIncrementalisedDictionary var = 
-  liftM (\t -> mkLocalVar VanillaId
+varIncrementalisedDictionary :: Var -> Type -> Type -> TypeLookupM Var
+varIncrementalisedDictionary var ty ty' = do
+  t <- incrementalisedDictionaryType ty ty'
+  return $ mkLocalVar VanillaId
                     (mutantNameIntoSpace (varName var)
                                       OccName.varName
                                       "incrementalisedD")
                     t
-                    vanillaIdInfo) $
-         incrementalisedDictionaryType
+                    vanillaIdInfo
 
-expIncrementalisedDictionary (Var v)
-  = liftM Var $ varIncrementalisedDictionary v
-expIncrementalisedDictionary (Type t)
-  | isTyVarTy t
-  = liftM (Type . mkTyVarTy) $ varIncrementalisedDictionary 
-                  $ getTyVar "shouldn't ever happen" t
-  | otherwise
+expIncrementalisedDictionary (Var v) = do
+  let ty = varType v
+  ty' <- mutantType ty
+  liftM Var $ varIncrementalisedDictionary v ty ty'
+expIncrementalisedDictionary (Type t@(isTyVarTy -> True)) = do
+  ty' <- mutantType t
+  liftM Var $ varIncrementalisedDictionary 
+                (getTyVar "shouldn't ever happen" t)
+                t
+                ty'
+expIncrementalisedDictionary (Type t@(splitTyConApp_maybe -> Just (tyCon, args))) = do
+  inst <- incrementalisedDictionaryInstance t
+  argsMutants <- mapM mutantType args
+  argsInsts <- mapM expIncrementalisedDictionary (map Type args)
+  return $ mkApps (Var $ inst) $ interlace3 (map Type args)
+                                            (map Type argsMutants)
+                                            argsInsts
+expIncrementalisedDictionary (Type t) 
   = liftM Var $ incrementalisedDictionaryInstance t
 
-incrementalisedDictionaryType :: TypeLookupM Type
-incrementalisedDictionaryType = liftM (mkTyConTy . tyThingTyCon . fromJustNote
-                                        ("The type of the Incrementalised "++
-                                         " typeclass dictionary"))
-                                      (lookupInctimeTyThing "T:Incrementalised"
-                                                            OccName.tcName)
+incrementalisedDictionaryType :: Type -> Type -> TypeLookupM Type
+incrementalisedDictionaryType baseType incrementalisedType = do
+  inc <- liftM (mkTyConTy . tyThingTyCon . fromJustNote
+                 ("The type of the Incrementalised "++
+                  "typeclass dictionary"))
+               (lookupInctimeTyThing "T:Incrementalised"
+                                     OccName.tcName)
+  return $ mkAppTys inc [baseType, incrementalisedType]
+
 incrementalisedDictionaryInstance :: Type -> TypeLookupM Var
 incrementalisedDictionaryInstance type_
   = liftM (tyThingId . fromJustNote ("incrementalisedDictionaryInstance for " ++
@@ -379,7 +399,7 @@ mutantExp (App expr arg)
 mutantExp (Lam id expr) = do 
   expr' <- mutantExp expr
   id' <- lookupOrMutantId id
-  idD <- varIncrementalisedDictionary id
+  idD <- varIncrementalisedDictionary id (typeFor id) (typeFor id')
   let iType = varType id'
   let oType = exprType expr'
 
@@ -522,7 +542,7 @@ mutantType (splitTyConApp_maybe -> Just (con, tys))
 mutantType (splitForAllTy_maybe -> Just (tyVar, ty)) = do
   ty' <- mutantType ty
   tyVar' <- mutantTyVar tyVar
-  incDType <- incrementalisedDictionaryType
+  incDType <- incrementalisedDictionaryType (mkTyVarTy tyVar) (mkTyVarTy tyVar')
   return $ mkForAllTy tyVar $ mkForAllTy tyVar' (mkFunTy incDType ty')
 
 mutantTyVar v = do m <- lookupOrMutantId v
@@ -892,6 +912,11 @@ dataConAtType con type_ = foldl (\e t -> App e (Type t))
 
 inctimeName = mkModuleName "Inctime"
 inctime = mkModule mainPackageId inctimeName
+
+typeFor :: Var -> Type
+typeFor v
+ | isTyVar v = mkTyVarTy v
+ | otherwise = varType v
 
 process targetFile moduleName = do
   defaultErrorHandler defaultDynFlags $ do
