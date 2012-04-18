@@ -329,24 +329,46 @@ incrementalisedDictionaryType baseType incrementalisedType = do
                                      OccName.tcName)
   return $ mkAppTys inc [baseType, incrementalisedType]
 
+lookupAndConvertInctimeTyThing converter msg n space
+  = liftM (converter . fromJustNote msg)
+          (lookupInctimeTyThing n
+                                space)
 incrementalisedTest n
-  = liftM (tyThingId . fromJustNote ("incrementalised" ++ n ++ "Test"))
-          (lookupInctimeTyThing ("isIncrementalised" ++ n)
-                                OccName.varName)
+  = lookupAndConvertInctimeTyThing tyThingId 
+                                   ("incrementalised" ++ n ++ "Test")
+                                   ("isIncrementalised" ++ n)
+                                   OccName.varName
 incrementalisedReplaceTest :: TypeLookupM Var
 incrementalisedReplaceTest = incrementalisedTest "Replace"
 incrementalisedHoistTest :: TypeLookupM Var
 incrementalisedHoistTest = incrementalisedTest "Hoist"
 incrementalisedIdentityMk :: TypeLookupM Var
 incrementalisedIdentityMk
-  = liftM (tyThingId . fromJustNote ("incrementalisedIdentityMk"))
-          (lookupInctimeTyThing ("mkIncrementalisedIdentity")
-                                OccName.varName)
+  = lookupAndConvertInctimeTyThing tyThingId
+                                   "incrementalisedIdentityMk"
+                                   "mkIncrementalisedIdentity"
+                                   OccName.varName
+incrementalisedReplaceMk :: TypeLookupM Var
+incrementalisedReplaceMk
+  = lookupAndConvertInctimeTyThing tyThingId
+                                   "incrementalisedReplaceMk"
+                                   "mkIncrementalisedReplace"
+                                   OccName.varName
+
+
+incrementalisedReplaceExtractor :: TypeLookupM Var
+incrementalisedReplaceExtractor
+  = lookupAndConvertInctimeTyThing tyThingId
+                                   "incrementalisedReplaceExtractor"
+                                   "extractReplaceValue"
+                                   OccName.varName
+
 objContainer :: TypeLookupM TyCon
 objContainer
-  = liftM (tyThingTyCon . fromJustNote ("objContainer"))
-          (lookupInctimeTyThing "Obj"
-                                OccName.tcName)
+  = lookupAndConvertInctimeTyThing tyThingTyCon
+                                   "objContainer"
+                                   "Obj"
+                                   OccName.tcName
 
 incrementalisedDictionaryInstance :: Type -> TypeLookupM Var
 incrementalisedDictionaryInstance type_
@@ -503,19 +525,46 @@ mutantAlt _ = return Nothing -- if we handle changes-moving-into-a-value, then
                              -- we should probably do something  here
 
 introduceSpecialAltCases c alts = do
-  r <- replaceAlt' c
+  let (defaultAlts, nonDefaultAlts)
+        = List.partition (\(a, _, _) -> a == DEFAULT) alts
+  r <- replaceAlt' c defaultAlts
   b <- builderAlts' c
-  return $ alts ++ [r] ++ b
+  return $ [(DEFAULT, [], r)] ++ nonDefaultAlts ++ b
 
 
-replaceAlt' c@(Case expr id type_ alts) = do
+replaceAlt' c@(Case expr id type_ alts) defaultAlts = do
   destType <- mutantType type_
   srcType  <- mutantType $ exprType expr
-  let destCon = lookupDataConByAdd destType AddConReplacement
-  let srcCon  = lookupDataConByAdd srcType  AddConReplacement
-  return (DataAlt $ srcCon
-         ,[exprVar expr]
-         ,App (dataConAtType destCon destType) c)
+  expr' <- mutantExp expr
+  dict <- expIncrementalisedDictionary (Type $ exprType expr)
+
+  replaceTest <- do
+    t <- incrementalisedReplaceTest
+    return $ mkApps (Var t) [Type $ exprType expr
+                            ,Type srcType
+                            ,dict]
+  replaceExtractor <- do
+    t <- incrementalisedReplaceExtractor
+    return $ mkApps (Var t) [Type $ exprType expr
+                            ,Type srcType
+                            ,dict]
+  replaceExp <- do
+    mkReplace <- incrementalisedReplaceMk
+    destDict <- expIncrementalisedDictionary (Type type_)
+    return $ Let (NonRec (exprVar expr) (App replaceExtractor expr')) $
+               mkApps (Var mkReplace)
+                      [Type type_
+                      ,Type destType
+                      ,destDict
+                      ,c]
+  return $ Case (App replaceTest expr')
+                (testArgVar "replaceAlt" (mkTyConTy boolTyCon) 0)
+                destType
+                (defaultAlts ++
+                [(DataAlt trueDataCon
+                 ,[]
+                 ,replaceExp)]
+                )
 
 
 builderAlts' (Case expr id type_ alts) = (liftM concat . mapM builderAlt') alts
