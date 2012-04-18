@@ -342,7 +342,11 @@ incrementalisedIdentityMk
   = liftM (tyThingId . fromJustNote ("incrementalisedIdentityMk"))
           (lookupInctimeTyThing ("mkIncrementalisedIdentity")
                                 OccName.varName)
-
+objContainer :: TypeLookupM TyCon
+objContainer
+  = liftM (tyThingTyCon . fromJustNote ("objContainer"))
+          (lookupInctimeTyThing "Obj"
+                                OccName.tcName)
 
 incrementalisedDictionaryInstance :: Type -> TypeLookupM Var
 incrementalisedDictionaryInstance type_
@@ -472,11 +476,11 @@ mutantExp c@(Case expr id type_ alts) = liftM4 Case
                                                 (mutantExp expr)
                                                 (mutantCoreBndr id)
                                                 (mutantType type_)
-                                                (liftM concat $ sequence
-                                                 [mutantAlts alts,
+                                                (introduceSpecialAltCases c =<<
+                                                 mutantAlts alts)
                                                   -- use the list monad return
-                                                  fmap return (replaceAlt' c),
-                                                  builderAlts' c])
+                                                  -- fmap return (replaceAlt' c),
+                                                  --builderAlts' c])
 mutantExp (Cast expr coercion) = liftM2 Cast
                                          (mutantExp expr)
                                          (mutantType coercion)
@@ -497,6 +501,13 @@ mutantAlt (DEFAULT, [], expr) = do
   return $ Just (DEFAULT, [], expr')
 mutantAlt _ = return Nothing -- if we handle changes-moving-into-a-value, then
                              -- we should probably do something  here
+
+introduceSpecialAltCases c alts = do
+  r <- replaceAlt' c
+  b <- builderAlts' c
+  return $ alts ++ [r] ++ b
+
+
 replaceAlt' c@(Case expr id type_ alts) = do
   destType <- mutantType type_
   srcType  <- mutantType $ exprType expr
@@ -683,6 +694,32 @@ classBind tyCon mutantTyCon = do
   let mkReplace = mkBuilder AddConReplacement [baseType]
   let mkIdentity = mkBuilder AddConIdentity []
 
+  callUndefined <- liftM (Var . tyThingId . fromJustNote "callUndefined")
+                         (lookupPreludeTyThing ""
+                                               "undefined"
+                                               OccName.varName)
+
+  extractReplace <- do
+    let buildValueVar = head $ testArgVars [baseType]
+    return $ Lam (testVar 0) $
+               Case (Var $ testVar 0)
+                    (testVar 0)
+                    baseType
+                    ((DEFAULT, [], App callUndefined 
+                                       (Type baseType)):
+                     (DataAlt (lookupDataConByAdd (mkTyConTy mutantTyCon)
+                                                   AddConReplacement)
+                     ,[buildValueVar]
+                     ,Var $ buildValueVar
+                     ):[])
+
+  extractBuild <- do
+    objContainerTy <- objContainer
+    return $ Lam (testVar 0) $
+               Lam (testArgVar baseName (mkTyConTy intTyCon) 1) $
+                 App callUndefined
+                     (Type $ mkTyConTy objContainerTy)
+
   return $ NonRec classInstanceId $ 
                 mkLams (tyConTyVars mutantTyCon)
                        (mkApps classDataConExp [ isReplace
@@ -690,7 +727,9 @@ classBind tyCon mutantTyCon = do
                                                , isHoist
                                                , isIdentity
                                                , mkReplace
-                                               , mkIdentity])
+                                               , mkIdentity
+                                               , extractReplace
+                                               , extractBuild])
   where classInstanceName = sameSortOfName
                               (getName tyCon)
                               (clsOccName OccName.varName
