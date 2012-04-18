@@ -337,6 +337,12 @@ incrementalisedReplaceTest :: TypeLookupM Var
 incrementalisedReplaceTest = incrementalisedTest "Replace"
 incrementalisedHoistTest :: TypeLookupM Var
 incrementalisedHoistTest = incrementalisedTest "Hoist"
+incrementalisedIdentityMk :: TypeLookupM Var
+incrementalisedIdentityMk
+  = liftM (tyThingId . fromJustNote ("incrementalisedIdentityMk"))
+          (lookupInctimeTyThing ("mkIncrementalisedIdentity")
+                                OccName.varName)
+
 
 incrementalisedDictionaryInstance :: Type -> TypeLookupM Var
 incrementalisedDictionaryInstance type_
@@ -428,20 +434,25 @@ mutantExp (Lam id expr) = do
   let oType = exprType expr'
 
   test <- liftM2 mkApps (liftM Var incrementalisedHoistTest)
-                        (return [Type (varType id)
-                                , Type iType
-                                , Var idD
-                                , Var id'])
+                        (return $ [Type (varType id)
+                                  , Type iType
+                                  , Var idD
+                                  , Var id'])
   idDvalue <- expIncrementalisedDictionary $ Type $ varType id
   let lets = [NonRec idD idDvalue]
                 
 
   let def = (DEFAULT, [], expr')
 
-  let hoist = (DataAlt trueDataCon
+  hoist <- do
+    mk <- incrementalisedIdentityMk
+    dict <- expIncrementalisedDictionary $ Type $ exprType expr
+    return (DataAlt trueDataCon
               ,[]
-              ,dataConAtType (lookupDataConByAdd oType AddConIdentity)
-                             oType
+              ,mkApps (Var mk)
+                      [Type (exprType expr)
+                      , Type oType
+                      , dict]
               )
   let result | isTyVar id = Lam id $ Lam id' $ Lam idD expr'
              | otherwise  = Lam id' $ mkLets lets $
