@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings, ScopedTypeVariables, MultiParamTypeClasses,
-             ExistentialQuantification,
+             ExistentialQuantification, UndecidableInstances,
              Rank2Types, FunctionalDependencies, FlexibleContexts #-}
 module Inctime where
 
@@ -22,7 +22,7 @@ data Obj = forall a. Obj a
  
 class Incrementalised base incrementalised | incrementalised -> base where
   isIncrementalisedReplace :: incrementalised -> Bool
-  isIncrementalisedBuild :: incrementalised -> Bool
+  isIncrementalisedBuild :: incrementalised -> Int -> Bool
   isIncrementalisedHoist :: incrementalised -> Bool
   isIncrementalisedIdentity :: incrementalised -> Bool
   mkIncrementalisedReplace :: base -> incrementalised
@@ -83,7 +83,7 @@ instance Incrementalised Char Char_incrementalised where
   isIncrementalisedIdentity _                             = False
   isIncrementalisedHoist Char_incrementalised_hoist = True
   isIncrementalisedHoist _                          = False
-  isIncrementalisedBuild _ = False
+  isIncrementalisedBuild _ _ = False
   extractBuildValue _ = undefined
   extractReplaceValue (Char_incrementalised_replace v) = v
   extractReplaceValue _ = error "Not a replace"
@@ -104,7 +104,7 @@ instance Incrementalised Bool Bool_incrementalised where
   isIncrementalisedIdentity _                             = False
   isIncrementalisedHoist Bool_incrementalised_hoist = True
   isIncrementalisedHoist _                          = False
-  isIncrementalisedBuild _ = False
+  isIncrementalisedBuild _ _ = False
   extractBuildValue _ = undefined
   extractReplaceValue (Bool_incrementalised_replace v) = v
   extractReplaceValue _ = error "Not a replace"
@@ -127,7 +127,7 @@ instance Incrementalised Int Int_incrementalised where
   isIncrementalisedIdentity _                             = False
   isIncrementalisedHoist Int_incrementalised_hoist = True
   isIncrementalisedHoist _                          = False
-  isIncrementalisedBuild _ = False
+  isIncrementalisedBuild _ _ = False
   extractBuildValue _ = undefined
   extractReplaceValue (Int_incrementalised_replace v) = v
   extractReplaceValue _ = error "Not a replace"
@@ -194,9 +194,9 @@ instance (Incrementalised elem elem_incrementalised) =>
             Incrementalised ([elem]) (BuiltinList_incrementalised elem elem_incrementalised) where
   isIncrementalisedReplace (BuiltinList_incrementalised_replace _ ) = True
   isIncrementalisedReplace _                                        = False
-  isIncrementalisedBuild (BuiltinList_incrementalised_build_using_0 _) = True
-  isIncrementalisedBuild (BuiltinList_incrementalised_build_using_1 _) = True
-  isIncrementalisedBuild _                                             = False
+  isIncrementalisedBuild (BuiltinList_incrementalised_build_using_0 _) 0 = True
+  isIncrementalisedBuild (BuiltinList_incrementalised_build_using_1 _) 1 = True
+  isIncrementalisedBuild _ _                                              = False
   isIncrementalisedIdentity BuiltinList_incrementalised_identity = True
   isIncrementalisedIdentity _                                    = False
   isIncrementalisedHoist BuiltinList_incrementalised_hoist = True

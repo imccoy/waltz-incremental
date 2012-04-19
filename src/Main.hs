@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns, DoRec, TupleSections #-}
+{-# LANGUAGE ViewPatterns, DoRec, TupleSections, ScopedTypeVariables #-}
 
 module Main where
 
@@ -36,6 +36,7 @@ import StaticFlags
 import TyCon
 import Type
 import TysWiredIn
+import TysPrim
 import Unique
 import UniqFM
 import Var
@@ -370,6 +371,12 @@ objContainer
                                    "Obj"
                                    OccName.tcName
 
+
+lookupPreludeFn :: String -> String -> TypeLookupM Var
+lookupPreludeFn m n = do
+  liftM (tyThingId . fromJustNote ("lookupPreludeFn " ++ m ++ "." ++ n))
+        (lookupPreludeTyThing m n OccName.varName)
+
 incrementalisedDictionaryInstance :: Type -> TypeLookupM Var
 incrementalisedDictionaryInstance type_
   = liftM (tyThingId . fromJustNote ("incrementalisedDictionaryInstance for " ++
@@ -508,6 +515,7 @@ mutantExp (Cast expr coercion) = liftM2 Cast
                                          (mutantType coercion)
 mutantExp (Type type_) = liftM Type (mutantType type_)
 mutantExp (Note note expr) = liftM (Note note) (mutantExp expr)
+mutantExp (Lit lit) = return (Lit lit)
 
 mutantAlts = liftM catMaybes . mapM mutantAlt
 
@@ -528,8 +536,8 @@ introduceSpecialAltCases c alts = do
   let (defaultAlts, nonDefaultAlts)
         = List.partition (\(a, _, _) -> a == DEFAULT) alts
   r <- replaceAlt' c defaultAlts
-  b <- builderAlts' c
-  return $ [(DEFAULT, [], r)] ++ nonDefaultAlts ++ b
+  b <- builderAlts' c r
+  return $ [(DEFAULT, [], b)] ++ nonDefaultAlts
 
 
 replaceAlt' c@(Case expr id type_ alts) defaultAlts = do
@@ -567,7 +575,8 @@ replaceAlt' c@(Case expr id type_ alts) defaultAlts = do
                 )
 
 
-builderAlts' (Case expr id type_ alts) = (liftM concat . mapM builderAlt') alts
+builderAlts' c@(Case expr id type_ alts) def
+  = foldM (builderAlt' c) def alts
 
 -- This is all about building a new value around an old one, for instance
 -- consing an element onto the head of a list.  n is the index of the argument
@@ -590,11 +599,16 @@ builderAlts' (Case expr id type_ alts) = (liftM concat . mapM builderAlt') alts
 -- we construct replace values for each argument provided as part of the
 -- incrementalised_build constructor and assign them to the incrementalised
 -- name of the argument.
-builderAlt' a@(DataAlt dataCon, binds, expr) = mapM (builderAltAtIndex' a)
-                                                    builders
-  where builders = builderMutantDataConIndexes dataCon
+builderAlt' c def a@(DataAlt dataCon, binds, expr)
+  = foldM (builderAltAtIndex' c a) 
+          def
+          (builderMutantDataConIndexes dataCon)
+builderAlt' c def a = return def
 
-builderAltAtIndex' (DataAlt dataCon, vars, expr) builderConIndex = do
+builderAltAtIndex' (Case c_expr c_id c_type c_alts)
+                   (DataAlt dataCon, vars, expr)
+                   def
+                   builderConIndex = do
   type_' <- mutantType type_
   let builderCon = lookupDataConByBuilderIndex type_'
                                                builderConIndex
@@ -603,12 +617,17 @@ builderAltAtIndex' (DataAlt dataCon, vars, expr) builderConIndex = do
   builderArgsIds <- mapM mutantId builderArgs
   builderArgsValues <- mapM replaceValue builderArgs
   expr' <- mutantExp expr
-  return (DataAlt builderCon
-         ,builderArgs
-         ,mkLets ((NonRec replaceVarId replaceVarValue)
-                  :(map (\(id, val) -> NonRec id val)
-                        (zip builderArgsIds builderArgsValues)))
-                 expr')
+  let alt = (DataAlt builderCon
+            ,builderArgs
+            ,mkLets ((NonRec replaceVarId replaceVarValue)
+                     :(map (\(id, val) -> NonRec id val)
+                           (zip builderArgsIds builderArgsValues)))
+                    expr')
+
+  liftM4 Case (mutantExp c_expr)
+              (mutantCoreBndr c_id)
+              (mutantType c_type)
+              (return [(DEFAULT, [], def),alt])
   where type_ = dataConOrigResTy dataCon
         builderArgs = listWithout builderConIndex vars
         replaceVar = vars !! builderConIndex
@@ -707,31 +726,53 @@ classBind tyCon mutantTyCon = do
                                                [baseType
                                                ,incrementalisedType]))
                       vanillaIdInfo
-  let mkTestAlts alts
+  let mkTestAlts f alts
         = Lam (testVar 0) $
-            Case (Var $ testVar 0)
-                 (testVar 0)
-                 (mkTyConTy boolTyCon)
-                 ((DEFAULT, [], Var falseDataConId):alts)
+            f $
+              Case (Var $ testVar 0)
+                   (testVar 0)
+                   (mkTyConTy boolTyCon)
+                   ((DEFAULT, [], Var falseDataConId):alts)
   let mkTest addConType argTypes
-        = mkTestAlts $ [(DataAlt $ lookupDataConByAdd (mkTyConTy mutantTyCon)
-                                                      addConType
-                       , testArgVars argTypes
-                       , Var trueDataConId)]
+        = mkTestAlts id $
+                      [(DataAlt $ lookupDataConByAdd (mkTyConTy mutantTyCon)
+                                                     addConType
+                      , testArgVars argTypes
+                      , Var trueDataConId)]
   let isReplace = mkTest AddConReplacement [baseType] 
   let isHoist = mkTest AddConHoist []
-  let buildAlts
-        = concat (map (\dataCon -> 
-                         map (\idx -> 
-                                let builderCon = lookupDataConByBuilderIndex
-                                                         (mkTyConTy mutantTyCon)
-                                                         (idx)
-                                 in (DataAlt builderCon
-                                    ,testArgVars (dataConOrigArgTys builderCon)
-                                    ,Var trueDataConId))
-                             (builderMutantDataConIndexes dataCon))
-                 (tyConDataCons tyCon))
-  let isBuild = mkTestAlts buildAlts
+  dataCons_builderCons <- do
+    let dataCons_indexes :: [(DataCon, Int)]
+          = concat $ map (\dataCon -> 
+                            zip (repeat dataCon)
+                                (builderMutantDataConIndexes dataCon)
+                         )
+                         (tyConDataCons tyCon)
+    let dataCons_builderCons :: [(DataCon, Int, DataCon)]
+          = map (\(dataCon, index) ->
+                   (dataCon
+                   ,index
+                   ,lookupDataConByBuilderIndex (mkTyConTy mutantTyCon)
+                                                index))
+                dataCons_indexes
+    return dataCons_builderCons
+  preludeEqTest <- lookupPreludeFn "GHC.Base" "eqInt"
+  let varEqualsInt v i
+        = mkApps (Var preludeEqTest)
+                 [Var v
+                 ,App (Var $ dataConWrapId intDataCon)
+                      (Lit $ mkMachInt $ fromIntegral i)]
+
+  isBuild <- do
+    let builderIndexArg = testArgVar baseName (mkTyConTy intTyCon) 2
+        
+    let buildAlts
+          = map (\(dataCon, idx, builderCon) -> 
+                    (DataAlt builderCon
+                    ,testArgVars (dataConOrigArgTys builderCon)
+                    ,varEqualsInt builderIndexArg idx))
+                dataCons_builderCons
+    return $ mkTestAlts (Lam builderIndexArg) buildAlts
   let isIdentity = mkTest AddConIdentity []
 
   let mkBuilder addConType argTypes
@@ -743,10 +784,7 @@ classBind tyCon mutantTyCon = do
   let mkReplace = mkBuilder AddConReplacement [baseType]
   let mkIdentity = mkBuilder AddConIdentity []
 
-  callUndefined <- liftM (Var . tyThingId . fromJustNote "callUndefined")
-                         (lookupPreludeTyThing ""
-                                               "undefined"
-                                               OccName.varName)
+  callUndefined <- liftM Var $ lookupPreludeFn "" "undefined"
 
   extractReplace <- do
     let buildValueVar = head $ testArgVars [baseType]
@@ -764,10 +802,44 @@ classBind tyCon mutantTyCon = do
 
   extractBuild <- do
     objContainerTy <- objContainer
+    let objBuilder = dataConWrapId $ head $ tyConDataCons $ objContainerTy
+    let builderIndexArg = testArgVar (baseName ++ "A") intTy 1
+    let builderPrimIndexArg = testArgVar (baseName ++ "AA") intPrimTy 1
+    let isThisIndexVar = testArgVar (baseName ++ "A") boolTy 2
+
+    let mkCase defaultAlt (dataCon, _, builderCon)
+          = Case (Var $ testVar 0)
+                 (testVar 0)
+                 (mkTyConTy objContainerTy)
+                 [(DEFAULT, [], defaultAlt)
+                 ,(DataAlt builderCon
+                  ,vs
+                  ,Case (Var builderIndexArg)
+                        builderIndexArg
+                        (mkTyConTy objContainerTy)
+                        [-- no default required, we're just deconstructing an Int
+                         (DataAlt intDataCon
+                         ,[builderPrimIndexArg]
+                         ,Case (Var builderPrimIndexArg)
+                               builderPrimIndexArg
+                               (mkTyConTy objContainerTy)
+                               ([(DEFAULT, [], defaultAlt)] ++
+                               map (\index -> 
+                                      (LitAlt $ mkMachInt $ fromIntegral index
+                                      ,[]
+                                      ,mkApps (Var objBuilder)
+                                              [Type $ varType (vs !! index)
+                                              ,Var $ vs !! index]))
+                                   [0..(length vs - 1)]))
+                        ]                 
+                 )]
+          where vs = testArgVars (dataConOrigArgTys builderCon)
+    let defaultAlt = App callUndefined
+                         (Type $ mkTyConTy objContainerTy)
+    
     return $ Lam (testVar 0) $
-               Lam (testArgVar baseName (mkTyConTy intTyCon) 1) $
-                 App callUndefined
-                     (Type $ mkTyConTy objContainerTy)
+               Lam builderIndexArg $
+                 foldl mkCase defaultAlt dataCons_builderCons
 
   return $ NonRec classInstanceId $ 
                 mkLams (tyConTyVars mutantTyCon)
