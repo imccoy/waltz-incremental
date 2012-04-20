@@ -36,7 +36,6 @@ import StaticFlags
 import TyCon
 import Type
 import TysWiredIn
-import TysPrim
 import Unique
 import UniqFM
 import Var
@@ -763,16 +762,6 @@ classBind tyCon mutantTyCon = do
                  ,App (Var $ dataConWrapId intDataCon)
                       (Lit $ mkMachInt $ fromIntegral i)]
 
-  isBuild <- do
-    let builderIndexArg = testArgVar baseName (mkTyConTy intTyCon) 2
-        
-    let buildAlts
-          = map (\(dataCon, idx, builderCon) -> 
-                    (DataAlt builderCon
-                    ,testArgVars (dataConOrigArgTys builderCon)
-                    ,varEqualsInt builderIndexArg idx))
-                dataCons_builderCons
-    return $ mkTestAlts (Lam builderIndexArg) buildAlts
   let isIdentity = mkTest AddConIdentity []
 
   let mkBuilder addConType argTypes
@@ -800,57 +789,14 @@ classBind tyCon mutantTyCon = do
                      ,Var $ buildValueVar
                      ):[])
 
-  extractBuild <- do
-    objContainerTy <- objContainer
-    let objBuilder = dataConWrapId $ head $ tyConDataCons $ objContainerTy
-    let builderIndexArg = testArgVar (baseName ++ "A") intTy 1
-    let builderPrimIndexArg = testArgVar (baseName ++ "AA") intPrimTy 1
-    let isThisIndexVar = testArgVar (baseName ++ "A") boolTy 2
-
-    let mkCase defaultAlt (dataCon, _, builderCon)
-          = Case (Var $ testVar 0)
-                 (testVar 0)
-                 (mkTyConTy objContainerTy)
-                 [(DEFAULT, [], defaultAlt)
-                 ,(DataAlt builderCon
-                  ,vs
-                  ,Case (Var builderIndexArg)
-                        builderIndexArg
-                        (mkTyConTy objContainerTy)
-                        [-- no default required, we're just deconstructing an Int
-                         (DataAlt intDataCon
-                         ,[builderPrimIndexArg]
-                         ,Case (Var builderPrimIndexArg)
-                               builderPrimIndexArg
-                               (mkTyConTy objContainerTy)
-                               ([(DEFAULT, [], defaultAlt)] ++
-                               map (\index -> 
-                                      (LitAlt $ mkMachInt $ fromIntegral index
-                                      ,[]
-                                      ,mkApps (Var objBuilder)
-                                              [Type $ varType (vs !! index)
-                                              ,Var $ vs !! index]))
-                                   [0..(length vs - 1)]))
-                        ]                 
-                 )]
-          where vs = testArgVars (dataConOrigArgTys builderCon)
-    let defaultAlt = App callUndefined
-                         (Type $ mkTyConTy objContainerTy)
-    
-    return $ Lam (testVar 0) $
-               Lam builderIndexArg $
-                 foldl mkCase defaultAlt dataCons_builderCons
-
   return $ NonRec classInstanceId $ 
                 mkLams (tyConTyVars mutantTyCon)
                        (mkApps classDataConExp [ isReplace
-                                               , isBuild
                                                , isHoist
                                                , isIdentity
                                                , mkReplace
                                                , mkIdentity
-                                               , extractReplace
-                                               , extractBuild])
+                                               , extractReplace])
   where classInstanceName = sameSortOfName
                               (getName tyCon)
                               (clsOccName OccName.varName

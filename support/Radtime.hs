@@ -22,13 +22,11 @@ data Obj = forall a. Obj a
  
 class Incrementalised base incrementalised | incrementalised -> base where
   isIncrementalisedReplace :: incrementalised -> Bool
-  isIncrementalisedBuild :: incrementalised -> Int -> Bool
   isIncrementalisedHoist :: incrementalised -> Bool
   isIncrementalisedIdentity :: incrementalised -> Bool
   mkIncrementalisedReplace :: base -> incrementalised
   mkIncrementalisedIdentity :: incrementalised
   extractReplaceValue :: incrementalised -> base
-  extractBuildValue :: incrementalised -> Int -> Obj
 
 class ApplicableIncrementalised base incrementalised where 
   applyInputChange  :: incrementalised -> base -> base
@@ -83,8 +81,6 @@ instance Incrementalised Char Char_incrementalised where
   isIncrementalisedIdentity _                             = False
   isIncrementalisedHoist Char_incrementalised_hoist = True
   isIncrementalisedHoist _                          = False
-  isIncrementalisedBuild _ _ = False
-  extractBuildValue _ = undefined
   extractReplaceValue (Char_incrementalised_replace v) = v
   extractReplaceValue _ = error "Not a replace"
   mkIncrementalisedIdentity = Char_incrementalised_identity
@@ -104,8 +100,6 @@ instance Incrementalised Bool Bool_incrementalised where
   isIncrementalisedIdentity _                             = False
   isIncrementalisedHoist Bool_incrementalised_hoist = True
   isIncrementalisedHoist _                          = False
-  isIncrementalisedBuild _ _ = False
-  extractBuildValue _ = undefined
   extractReplaceValue (Bool_incrementalised_replace v) = v
   extractReplaceValue _ = error "Not a replace"
   mkIncrementalisedIdentity = Bool_incrementalised_identity
@@ -127,8 +121,6 @@ instance Incrementalised Int Int_incrementalised where
   isIncrementalisedIdentity _                             = False
   isIncrementalisedHoist Int_incrementalised_hoist = True
   isIncrementalisedHoist _                          = False
-  isIncrementalisedBuild _ _ = False
-  extractBuildValue _ = undefined
   extractReplaceValue (Int_incrementalised_replace v) = v
   extractReplaceValue _ = error "Not a replace"
   mkIncrementalisedIdentity = Int_incrementalised_identity
@@ -194,16 +186,10 @@ instance (Incrementalised elem elem_incrementalised) =>
             Incrementalised ([elem]) (BuiltinList_incrementalised elem elem_incrementalised) where
   isIncrementalisedReplace (BuiltinList_incrementalised_replace _ ) = True
   isIncrementalisedReplace _                                        = False
-  isIncrementalisedBuild (BuiltinList_incrementalised_build_using_0 _) 0 = True
-  isIncrementalisedBuild (BuiltinList_incrementalised_build_using_1 _) 1 = True
-  isIncrementalisedBuild _ _                                              = False
   isIncrementalisedIdentity BuiltinList_incrementalised_identity = True
   isIncrementalisedIdentity _                                    = False
   isIncrementalisedHoist BuiltinList_incrementalised_hoist = True
   isIncrementalisedHoist _                                 = False
-  extractBuildValue (BuiltinList_incrementalised_build_using_0 v) 1 = Obj v
-  extractBuildValue (BuiltinList_incrementalised_build_using_1 v) 0 = Obj v
-  extractBuildValue _ _ = error "Build doesn't have that"
   extractReplaceValue (BuiltinList_incrementalised_replace v) = v
   extractReplaceValue _ = error "Not a replace"
   mkIncrementalisedIdentity = BuiltinList_incrementalised_identity
