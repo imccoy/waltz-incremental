@@ -110,6 +110,7 @@ lookupMutantTyCon tyCon
     -- TODO: less manky test
   | "(->)" == (nameString.getName) tyCon = return tyCon
   | "*" == (nameString.getName) tyCon    = return tyCon
+  | isPrimTyCon tyCon                    = return tyCon
   | otherwise                            = do
     tyThing <- lookupMutantTyThing (ATyCon tyCon)
     case tyThing of
@@ -310,15 +311,17 @@ expIncrementalisedDictionary (Type t@(isTyVarTy -> True)) = do
                 (getTyVar "shouldn't ever happen" t)
                 t
                 ty'
-expIncrementalisedDictionary (Type t@(splitTyConApp_maybe -> Just (tyCon, args))) = do
-  inst <- incrementalisedDictionaryInstance t
+expIncrementalisedDictionary (Type t) = do
+  let base_t = snd $ splitFunTys $ snd $ splitForAllTys t
+  inst <- incrementalisedDictionaryInstance base_t
+  let args = case splitTyConApp_maybe t of
+               Just (_, a) -> a
+               Nothing     -> []
   argsMutants <- mapM mutantType args
   argsInsts <- mapM expIncrementalisedDictionary (map Type args)
   return $ mkApps (Var $ inst) $ interlace3 (map Type args)
                                             (map Type argsMutants)
                                             argsInsts
-expIncrementalisedDictionary (Type t) 
-  = liftM Var $ incrementalisedDictionaryInstance t
 
 incrementalisedDictionaryType :: Type -> Type -> TypeLookupM Type
 incrementalisedDictionaryType baseType incrementalisedType = do
@@ -354,6 +357,13 @@ incrementalisedReplaceMk
                                    "incrementalisedReplaceMk"
                                    "mkIncrementalisedReplace"
                                    OccName.varName
+incrementalisedHoistMk :: TypeLookupM Var
+incrementalisedHoistMk
+  = lookupAndConvertInctimeTyThing tyThingId
+                                   "incrementalisedHoistMk"
+                                   "mkIncrementalisedHoist"
+                                   OccName.varName
+
 
 
 incrementalisedReplaceExtractor :: TypeLookupM Var
@@ -378,6 +388,15 @@ lookupPreludeFn m n = do
 
 incrementalisedDictionaryInstance :: Type -> TypeLookupM Var
 incrementalisedDictionaryInstance type_
+  | let tyCon = fmap fst $ splitTyConApp_maybe type_
+     in isJust tyCon && (isPrimTyCon $ fromJust tyCon)
+  = lookupPreludeFn "" "undefined"
+  | isTyVarTy type_
+  = varIncrementalisedDictionary (getTyVar "won't happen" type_)
+                                 type_
+                             =<< (mutantType type_)
+                                      
+  | otherwise
   = liftM (tyThingId . fromJustNote ("incrementalisedDictionaryInstance for " ++
                                      (showSDoc $ ppr type_) ++ " " ++
                                      (showSDoc $ ppr mName)))
@@ -403,11 +422,13 @@ mutantClsName name instanceType
 
 mutantClsOccName nameSpace instanceType = clsOccName nameSpace clsName' params
   where 
-    (_, cls) = splitFunTys instanceType
-    (clsTy, paramsTys) = maybe (error $ "mutantClsOccName couldn't split " ++
-                                        (showSDoc $ ppr cls))
-                               id
-                               $ splitTyConApp_maybe cls
+    (_, cls) = splitFunTys $ snd $ splitForAllTys instanceType
+    (clsTy, paramsTys) = fromJustNote ("mutantClsOccName couldn't split " ++
+                                       (showSDoc $ ppr cls) ++ 
+                                       "(was " ++ 
+                                       (showSDoc $ ppr $ instanceType) ++
+                                       ")")
+                         $ splitTyConApp_maybe cls
     baseName = getName $ clsTy
     params = map (\t -> maybe (error $ "mutantClsOccName couldn't split " ++
                                        (showSDoc $ ppr cls) ++
@@ -426,12 +447,11 @@ incrementalisedDictionaryInstanceName nameSpace instanceType
                          (adaptName baseName) ++
                          "_incrementalised")
   where 
-    (_, cls) = splitFunTys instanceType
-    (clsTy, _) = maybe (error $"incrementalisedDictionaryInstanceName"++
+    (clsTy, _) = fromJustNote ("incrementalisedDictionaryInstanceName"++
                                        " couldn't split " ++
-                                       (showSDoc $ ppr cls))
-                               id
-                               $ splitTyConApp_maybe cls
+                                       (showSDoc $ ppr instanceType) ++
+                                       ")")
+                               $ splitTyConApp_maybe instanceType
     baseName = getName $ clsTy
 
 
@@ -640,11 +660,22 @@ dataConValueByType addConType mType =
   let con = lookupDataConByAdd mType addConType
    in dataConAtType con mType
 
-hoistValue = dataConValue AddConHoist
---replaceValue = fmap App (dataConValue AddConReplacement) . return
-replaceValue var = do
-  con <- dataConValue AddConReplacement var
-  return (App con (Var var))
+incrementalisedDictElement getter ty = do
+  ty' <- mutantType ty
+  g <- getter
+  dict <- expIncrementalisedDictionary $ Type ty
+  return $ mkApps (Var g)
+                  [Type ty
+                  ,Type ty'
+                  ,dict]
+
+hoistValue var = incrementalisedDictElement incrementalisedHoistMk
+                                            (typeFor var)
+replaceValue var = liftM2 App
+                          (incrementalisedDictElement
+                             incrementalisedReplaceMk
+                             (typeFor var))
+                          (return $ Var var)
 
 mutantType :: Type -> TypeLookupM Type
 mutantType (getTyVar_maybe -> Just tyVar)
@@ -772,6 +803,7 @@ classBind tyCon mutantTyCon = do
 
   let mkReplace = mkBuilder AddConReplacement [baseType]
   let mkIdentity = mkBuilder AddConIdentity []
+  let mkHoist = mkBuilder AddConHoist []
 
   callUndefined <- liftM Var $ lookupPreludeFn "" "undefined"
 
@@ -796,6 +828,7 @@ classBind tyCon mutantTyCon = do
                                                , isIdentity
                                                , mkReplace
                                                , mkIdentity
+                                               , mkHoist
                                                , extractReplace])
   where classInstanceName = sameSortOfName
                               (getName tyCon)
@@ -1090,7 +1123,7 @@ process targetFile moduleName = do
       setSessionDynFlags dflags'
       target <- guessTarget targetFile Nothing
       target_runtime <- guessTarget "Inctime" Nothing
-      setTargets [target]
+      setTargets [target, target_runtime]
       liftIO $ putStrLn "loading."
       load LoadAllTargets
       liftIO $ putStrLn "loaded. Getting modSum."
