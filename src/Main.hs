@@ -42,6 +42,14 @@ import Var
 
 import GHC hiding (exprType)
 
+import CorePrep (corePrepPgm)
+import CoreToStg (coreToStg)
+import SimplStg (stg2stg)
+import TidyPgm (tidyProgram)
+import qualified Generator.TopLevel as Js (generate)
+import Javascript.Language (Javascript)
+import qualified Javascript.Formatted as Js
+
 
 interlace :: [a] -> [a] -> [a]
 interlace [] [] = []
@@ -1148,6 +1156,10 @@ process targetFile moduleName = do
                                    , outputFile = Just $ targetFile ++ ".o"
                                    }
       (hscGenOutput hscBatchCompiler) (dm_core_module d') modSum Nothing
+      cg <- cgGutsFromModGuts $ dm_core_module d'
+      liftIO $ do
+        js <- concreteJavascriptFromCgGuts dflags' $ cg
+        writeFile (targetFile ++ ".js") js
       return ()
 
 lintPrintAndFail desugaredModule = do 
@@ -1167,6 +1179,25 @@ main = do
                              [from] -> (from, from)
                              [from, moduleName] -> (from, moduleName)
   process from moduleName
+
+-- this function stolen pretty hard from ghcjs
+concreteJavascriptFromCgGuts :: DynFlags -> CgGuts -> IO String
+concreteJavascriptFromCgGuts dflags core =
+  do core_binds <- corePrepPgm dflags (cg_binds core) (cg_tycons $ core)
+     stg <- coreToStg (modulePackageId . cg_module $ core) core_binds
+     (stg', _ccs) <- stg2stg dflags (cg_module core) stg
+     let abstract :: Javascript js => js
+         abstract = Js.generate (cg_module core) stg'
+     return $ show (abstract :: Js.Formatted)
+
+-- this one stolen from the same place
+cgGutsFromModGuts :: GhcMonad m => ModGuts -> m CgGuts
+cgGutsFromModGuts guts =
+  do hscEnv <- getSession
+     simplGuts <- hscSimplify guts
+     (cgGuts, _) <- liftIO $ tidyProgram hscEnv simplGuts
+     return cgGuts
+
 
 showAllModulesContents :: Ghc ()
 showAllModulesContents = do
