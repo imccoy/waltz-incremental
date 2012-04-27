@@ -154,6 +154,17 @@ incrementalisedDictionaryType baseType incrementalisedType = do
                                      OccName.tcName)
   return $ mkAppTys inc [baseType, incrementalisedType]
 
+applicableDictionaryType :: Type -> Type -> TypeLookupM Type
+applicableDictionaryType baseType incrementalisedType = do
+  inc <- liftM (mkTyConTy . tyThingTyCon . fromJustNote
+                 ("The type of the ApplicableIncrementalised "++
+                  "typeclass dictionary"))
+               (lookupInctimeTyThing "T:ApplicableIncrementalised"
+                                     OccName.tcName)
+  return $ mkAppTys inc [baseType, incrementalisedType]
+
+
+
 lookupAndConvertInctimeTyThing converter msg n space
   = liftM (converter . fromJustNote msg)
           (lookupInctimeTyThing n
@@ -167,6 +178,8 @@ incrementalisedReplaceTest :: TypeLookupM Var
 incrementalisedReplaceTest = incrementalisedTest "Replace"
 incrementalisedHoistTest :: TypeLookupM Var
 incrementalisedHoistTest = incrementalisedTest "Hoist"
+incrementalisedIdentityTest :: TypeLookupM Var
+incrementalisedIdentityTest = incrementalisedTest "Identity"
 incrementalisedIdentityMk :: TypeLookupM Var
 incrementalisedIdentityMk
   = lookupAndConvertInctimeTyThing tyThingId
@@ -194,13 +207,13 @@ incrementalisedReplaceExtractor
                                    "incrementalisedReplaceExtractor"
                                    "extractReplaceValue"
                                    OccName.varName
+inputChangeApplier :: TypeLookupM Var
+inputChangeApplier
+  = lookupAndConvertInctimeTyThing tyThingId
+                                   "inputChangeApplier"
+                                   "applyInputChange"
+                                   OccName.varName
 
-objContainer :: TypeLookupM TyCon
-objContainer
-  = lookupAndConvertInctimeTyThing tyThingTyCon
-                                   "objContainer"
-                                   "Obj"
-                                   OccName.tcName
 
 
 lookupPreludeFn :: String -> String -> TypeLookupM Var

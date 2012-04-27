@@ -105,7 +105,8 @@ mutantTyCon tyCon = do
                                       " :: " ++ (showSDoc.ppr$tyCon))
                                    tyCon
   classBinds <- if hasClassBinds
-                  then classBind tyCon mutantAlgTyCon >>= (\x -> return [x])
+                  then sequence [incrementalisedClassBind tyCon mutantAlgTyCon
+                                ,applicableClassBind tyCon mutantAlgTyCon]
                   else return []
   return (newTyCon, classBinds)
   where
@@ -293,9 +294,13 @@ incrementalisedDictElement getter ty = do
                   ,Type ty'
                   ,dict]
 
-varIncrementalisedDictionary :: Var -> Type -> Type -> TypeLookupM Var
-varIncrementalisedDictionary var ty ty' = do
-  t <- incrementalisedDictionaryType ty ty'
+varIncrementalisedDictionary :: (Type -> Type -> TypeLookupM Type) ->
+                                Var ->
+                                Type ->
+                                Type ->
+                                TypeLookupM Var
+varIncrementalisedDictionary dictTy var ty ty' = do
+  t <- dictTy ty ty'
   return $ mkLocalVar VanillaId
                     (mutantNameIntoSpace (varName var)
                                       OccName.varName
@@ -306,32 +311,43 @@ varIncrementalisedDictionary var ty ty' = do
 expIncrementalisedDictionary (Var v) = do
   let ty = varType v
   ty' <- mutantType ty
-  liftM Var $ varIncrementalisedDictionary v ty ty'
-expIncrementalisedDictionary (Type t@(isTyVarTy -> True)) = do
+  liftM Var $ varIncrementalisedDictionary
+                incrementalisedDictionaryType
+                v
+                ty
+                ty'
+expIncrementalisedDictionary (Type t)
+  = incrementalisedDictionary incrementalisedDictionaryType
+                              incrementalisedDictionaryInstance
+                              t
+
+incrementalisedDictionary dictTy _ t@(getTyVar_maybe -> (Just tyVar)) = do
   ty' <- mutantType t
-  liftM Var $ varIncrementalisedDictionary 
-                (getTyVar "shouldn't ever happen" t)
+  liftM Var $ varIncrementalisedDictionary
+                dictTy
+                tyVar
                 t
                 ty'
-expIncrementalisedDictionary (Type t) = do
+incrementalisedDictionary dictTy dictVal t = do
   let base_t = snd $ splitFunTys $ snd $ splitForAllTys t
-  inst <- incrementalisedDictionaryInstance base_t
+  inst <- dictVal base_t
   let args = case splitTyConApp_maybe t of
                Just (_, a) -> a
                Nothing     -> []
   argsMutants <- mapM mutantType args
-  argsInsts <- mapM expIncrementalisedDictionary (map Type args)
+  argsInsts <- mapM (incrementalisedDictionary dictTy dictVal) args
   return $ mkApps (Var $ inst) $ interlace3 (map Type args)
                                             (map Type argsMutants)
                                             argsInsts
 
-incrementalisedDictionaryInstance :: Type -> TypeLookupM Var
-incrementalisedDictionaryInstance type_
+dictionaryInstance :: Type -> (NameSpace -> Type -> (Name, OccName)) -> TypeLookupM Var
+dictionaryInstance type_ nameFinder
   | let tyCon = fmap fst $ splitTyConApp_maybe type_
      in isJust tyCon && (isPrimTyCon $ fromJust tyCon)
   = lookupPreludeFn "" "undefined"
   | isTyVarTy type_
-  = varIncrementalisedDictionary (getTyVar "won't happen" type_)
+  = varIncrementalisedDictionary incrementalisedDictionaryType
+                                 (getTyVar "won't happen" type_)
                                  type_
                              =<< (mutantType type_)
                                       
@@ -342,9 +358,17 @@ incrementalisedDictionaryInstance type_
           (lookupTypeM (fmap adaptModule $ nameModule_maybe oldName)
                        (lookupNameEnvString (occNameString mName)
                                             (occNameSpace mName)))
-  where (oldName, mName) = incrementalisedDictionaryInstanceName
+  where (oldName, mName) = nameFinder
                                 (OccName.varName)
                                 type_
+
+incrementalisedDictionaryInstance :: Type -> TypeLookupM Var
+incrementalisedDictionaryInstance type_
+  = dictionaryInstance type_ incrementalisedDictionaryInstanceName
+
+applicableDictionaryInstance :: Type -> TypeLookupM Var
+applicableDictionaryInstance type_
+  = dictionaryInstance type_ applicableDictionaryInstanceName
 
 clsOccName space clsName params  = mkOccName space newName
   where
@@ -380,8 +404,14 @@ mutantClsOccName nameSpace instanceType = clsOccName nameSpace clsName' params
     clsName' = (drop 2 $ clsNameString) ++ "_incrementalised"
 
 incrementalisedDictionaryInstanceName nameSpace instanceType
+  = dictionaryInstanceName nameSpace instanceType "Incrementalised"
+
+applicableDictionaryInstanceName nameSpace instanceType
+  = dictionaryInstanceName nameSpace instanceType "ApplicableIncrementalised"
+
+dictionaryInstanceName nameSpace instanceType className
   = (baseName, mkOccName nameSpace $
-                         "$fIncrementalised" ++ 
+                         "$f" ++ className ++ 
                          (nameString baseName) ++ 
                          (adaptName baseName) ++
                          "_incrementalised")
@@ -393,23 +423,42 @@ incrementalisedDictionaryInstanceName nameSpace instanceType
                                $ splitTyConApp_maybe instanceType
     baseName = getName $ clsTy
 
-
-classBind :: TyCon -> TyCon -> TypeLookupM (CoreBind)
-classBind tyCon mutantTyCon = do
+makeClassInstance clsNameS tyCon mutantTyCon args fns = do
   classDataCon <-  fmap (tyThingDataCon . fromJust) $ 
-                        lookupInctimeTyThing "D:Incrementalised"
+                        lookupInctimeTyThing ("D:" ++ clsNameS)
                                              OccName.dataName
 
   let classDataConExp = mkApps (Var $ dataConWrapId classDataCon)
                                (map Type [baseType, incrementalisedType])
+  let instanceName = sameSortOfName
+                              (getName tyCon)
+                              (clsOccName OccName.varName
+                                          (clsNameS ++
+                                           (nameString $ getName tyCon) ++
+                                           (nameString $ getName tyCon) ++
+                                           "_incrementalised")
+                                          ([] :: [TyCon]))
+                              (nameModule $ getName tyCon)
+        
   let classInstanceId
         = mkGlobalVar VanillaId
-                      classInstanceName
+                      instanceName
                       (mkForAllTys (tyConTyVars mutantTyCon)
-                                   (mkTyConApp (dataConTyCon classDataCon)
+                                   (mkFunTys (map varType args)
+                                             (mkTyConApp
+                                               (dataConTyCon classDataCon)
                                                [baseType
-                                               ,incrementalisedType]))
+                                               ,incrementalisedType])))
                       vanillaIdInfo
+  
+  return $ NonRec classInstanceId $ 
+                mkLams (tyConTyVars mutantTyCon ++ args)
+                       (mkApps classDataConExp fns)
+  where baseType = mkTyConAppTy tyCon 
+        incrementalisedType = mkTyConAppTy mutantTyCon
+
+incrementalisedClassBind :: TyCon -> TyCon -> TypeLookupM (CoreBind)
+incrementalisedClassBind tyCon mutantTyCon = do
   let mkTestAlts f alts
         = Lam (testVar 0) $
             f $
@@ -421,7 +470,7 @@ classBind tyCon mutantTyCon = do
         = mkTestAlts id $
                       [(DataAlt $ lookupDataConByAdd (mkTyConTy mutantTyCon)
                                                      addConType
-                      , testArgVars argTypes
+                      , testArgVars baseName argTypes
                       , Var trueDataConId)]
   let isReplace = mkTest AddConReplacement [baseType] 
   let isHoist = mkTest AddConHoist []
@@ -450,10 +499,10 @@ classBind tyCon mutantTyCon = do
   let isIdentity = mkTest AddConIdentity []
 
   let mkBuilder addConType argTypes
-        = mkLams (testArgVars argTypes)
+        = mkLams (testArgVars baseName argTypes)
                  (mkApps (dataConValueByType addConType (mkTyConTy mutantTyCon))
                          (map (Type . mkTyVarTy) (tyConTyVars mutantTyCon) ++
-                          map Var (testArgVars argTypes)))
+                          map Var (testArgVars baseName argTypes)))
 
   let mkReplace = mkBuilder AddConReplacement [baseType]
   let mkIdentity = mkBuilder AddConIdentity []
@@ -462,7 +511,7 @@ classBind tyCon mutantTyCon = do
   callUndefined <- liftM Var $ lookupPreludeFn "" "undefined"
 
   extractReplace <- do
-    let buildValueVar = head $ testArgVars [baseType]
+    let buildValueVar = head $ testArgVars baseName [baseType]
     return $ Lam (testVar 0) $
                Case (Var $ testVar 0)
                     (testVar 0)
@@ -475,40 +524,117 @@ classBind tyCon mutantTyCon = do
                      ,Var $ buildValueVar
                      ):[])
 
-  return $ NonRec classInstanceId $ 
-                mkLams (tyConTyVars mutantTyCon)
-                       (mkApps classDataConExp [ isReplace
-                                               , isHoist
-                                               , isIdentity
-                                               , mkReplace
-                                               , mkIdentity
-                                               , mkHoist
-                                               , extractReplace])
-  where classInstanceName = sameSortOfName
-                              (getName tyCon)
-                              (clsOccName OccName.varName
-                                          ("Incrementalised" ++
-                                           (nameString $ getName tyCon) ++
-                                           (nameString $ getName tyCon) ++
-                                           "_incrementalised")
-                                          ([] :: [TyCon]))
-                              (nameModule $ getName tyCon)
-        baseName = (nameString $ classInstanceName)
+  makeClassInstance "Incrementalised"
+                    tyCon
+                    mutantTyCon
+                    []
+                    [ isReplace
+                    , isHoist
+                    , isIdentity
+                    , mkReplace
+                    , mkIdentity
+                    , mkHoist
+                    , extractReplace]
+  where baseName = "Incrementalised" ++ (nameString $ getName $ tyCon)
         testVar = testArgVar baseName incrementalisedType
-        testArgVars types = zipWith (testArgVar baseName) types [1..]
-        baseType = mkTyConApp tyCon 
-                               (map mkTyVarTy $ tyConTyVars tyCon)
-        incrementalisedType
-          = mkTyConApp mutantTyCon
-                       (map mkTyVarTy $ tyConTyVars mutantTyCon)
+        
+        baseType = mkTyConAppTy tyCon 
+        incrementalisedType = mkTyConAppTy mutantTyCon
 
-        dataConValueByType addConType mType = 
-          let con = lookupDataConByAdd mType addConType
-           in dataConAtType con mType
+        dataConValueByType addConType mType
+           = dataConAtType (lookupDataConByAdd mType addConType)
+                           mType
+
+mkTyConAppTy tyCon = mkTyConApp tyCon
+                                (map mkTyVarTy $ tyConTyVars tyCon)
+
+applicableClassBind :: TyCon -> TyCon -> TypeLookupM (CoreBind)
+applicableClassBind tyCon mutantTyCon = do
+  -- class ApplicableIncrementalised base incrementalised where 
+  --   applyInputChange  :: incrementalised -> base -> base
+
+  dataConAlts <- mapM (\dataCon -> do
+                        mutantDataCon <- lookupMutantDataCon dataCon
+                        let initialArgTys = dataConOrigArgTys dataCon
+                        let mutantArgTys = dataConOrigArgTys mutantDataCon
+
+                        let initialVars = testArgVars (baseName ++ "Initial")
+                                                      (initialArgTys)
+                        let mutantVars = testArgVars (baseName ++ "Mutant")
+                                                     (mutantArgTys)
+
+                        applier <- inputChangeApplier
+                        applicableDict <- mapM (incrementalisedDictionary
+                                                  applicableDictionaryType
+                                                  applicableDictionaryInstance)
+                                               initialArgTys
+                                               
+                        let recursiveApply
+                             = mkApps (Var $ dataConWrapId dataCon)
+                                      (map (Type . mkTyVarTy)
+                                           (tyConTyVars tyCon) ++
+                                       map (\(initialVar, mutantVar, dict) ->
+                                              mkApps (Var applier)
+                                                     [Type $ varType initialVar
+                                                     ,Type $ varType mutantVar
+                                                     ,dict
+                                                     ,Var $ mutantVar
+                                                     ,Var $ initialVar])
+                                           (zip3 initialVars 
+                                                 mutantVars 
+                                                 applicableDict))
+                        return (DataAlt mutantDataCon
+                               ,mutantVars
+                               ,Case (Var initialVar)
+                                     initialVar
+                                     baseType
+                                     [(DataAlt dataCon
+                                      ,initialVars
+                                      ,recursiveApply)
+                                     ])
+                      )
+                      (tyConDataCons tyCon)
+
+  let fn = Lam changeVar $
+             Lam initialVar $
+               Case (Var changeVar)
+                    changeVar
+                    baseType
+                    (dataConAlts ++
+                      [(DataAlt $ lookupDataConByAdd (mkTyConTy mutantTyCon)
+                                                     AddConReplacement
+                        ,[replaceVar]
+                        ,Var replaceVar
+                       ),
+                       (DataAlt $ lookupDataConByAdd (mkTyConTy mutantTyCon)
+                                                     AddConIdentity
+                        ,[]
+                        ,Var initialVar)])
+
+  dictArgs <- mapM (\var -> do
+                      let ty = mkTyVarTy $ var
+                      ty' <- mutantType ty
+                      varIncrementalisedDictionary applicableDictionaryType
+                                                   var ty ty')
+                   (tyConTyVars tyCon)
+                    
+  makeClassInstance "ApplicableIncrementalised"
+                    tyCon
+                    mutantTyCon
+                    dictArgs
+                    [fn]
+  where baseType = mkTyConAppTy tyCon 
+        incrementalisedType = mkTyConAppTy mutantTyCon
+        baseName = "applicableIncrementalised" ++ (nameString $ getName tyCon)
+        changeVar = testArgVar (baseName ++ "Change") incrementalisedType 0
+        initialVar = testArgVar (baseName ++ "Initial") baseType 0
+        replaceVar = testArgVar (baseName ++ "Replace") baseType 0
+        boolVar = testArgVar (baseName ++ "Test") boolTy 0
+ 
 
 
 
-
+testArgVars baseName types = zipWith (testArgVar baseName) types [1..]
 testArgVar baseName type_ n = mkLocalVar VanillaId 
                                 (mkInternalName (getUnique $ tvn) 
                                                 tvn

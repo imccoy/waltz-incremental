@@ -107,7 +107,10 @@ mutantExp (App expr arg)
 mutantExp (Lam id expr) = do 
   expr' <- mutantExp expr
   id' <- lookupOrMutantId id
-  idD <- varIncrementalisedDictionary id (typeFor id) (typeFor id')
+  idD <- varIncrementalisedDictionary incrementalisedDictionaryType
+                                      id
+                                      (typeFor id)
+                                      (typeFor id')
   let iType = varType id'
   let oType = exprType expr'
 

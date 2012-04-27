@@ -1,15 +1,12 @@
 bindir=../dist/build/
-InMemoryApplier=$(bindir)/InMemoryApplier/InMemoryApplier
-DatabaseApplier=$(bindir)/DatabaseApplier/DatabaseApplier
-Incrementalizer=$(bindir)/Incrementalizer/Incrementalizer
-hcr2hs=$(bindir)/hcr2hs/hcr2hs
+Incrementaliser=$(bindir)/Incrementaliser/Incrementaliser
 
 default: Bmain Bweb
 	./Bmain
 	echo "try Bweb or Bprime-web-db for moar fun"
 
-B.hi: B.hs
-	$(Incrementalizer) B && as B.s -o B.o
+B.hi: B.hs $(Incrementaliser)
+	$(Incrementaliser) B && as B.s -o B.o
 
 Bmain: B.hi Inctime.hs Bmain.hs
 	ghc --make Bmain.hs
