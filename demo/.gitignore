@@ -2,8 +2,6 @@
 *.S
 db
 deps
-Bprime.hs
-Bprime.*instances.hs
-Bprime.main
-Bprime-web
-
+Bmain
+Bweb
+B.js

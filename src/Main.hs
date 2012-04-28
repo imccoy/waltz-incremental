@@ -21,7 +21,7 @@ import HscTypes hiding (lookupDataCon, lookupType)
 import HscMain
 import IfaceSyn (IfaceInst (..))
 import IfaceType (toIfaceTyCon_name)
-import InstEnv (extendInstEnvList, instEnvElts,
+import InstEnv (extendInstEnvList,
                 is_cls, is_dfun, is_tys, is_tcs, is_tvs, is_flag)
 import Literal
 import Module
@@ -367,8 +367,6 @@ process targetFile modName = do
       liftIO $ do
         showAllModuleContents $ mg_types $ dm_core_module $ d'
         putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d'
-        putStrLn $ showSDoc $ ppr $ mg_inst_env $ dm_core_module d'
-        printAllInsts $ instEnvElts $ mg_inst_env $ dm_core_module d'
         putStrLn $ ms_hspp_file modSum
 
       liftIO $ do
@@ -378,15 +376,8 @@ process targetFile modName = do
                                    , extCoreName = targetFile ++ ".hcr"
                                    , outputFile = Just $ targetFile ++ ".o"}
 
-      simplifiedCore <- hscSimplify $ dm_core_module d'
-      (cg, detailsFromGuts) <- cgGutsFromModGuts $ dm_core_module d'
-      liftIO $ do
-        putStrLn $ showSDoc $ ppr $ mg_binds simplifiedCore
-        putStrLn "SIMPLIFIED"
-        putStrLn $ showSDoc $ ppr $ mg_inst_env simplifiedCore
-        putStrLn "TIDIED"
-        putStrLn $ showSDoc $ ppr $ md_insts detailsFromGuts
-      (hscGenOutput hscBatchCompiler) simplifiedCore modSum Nothing
+      (cg, _) <- cgGutsFromModGuts $ dm_core_module d'
+      (hscGenOutput hscBatchCompiler) (dm_core_module d') modSum Nothing
       liftIO $ do
         js <- concreteJavascriptFromCgGuts dflags' $ cg
         writeFile (targetFile ++ ".js") js
