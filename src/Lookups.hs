@@ -5,6 +5,7 @@ import Control.Monad.Reader hiding (liftIO)
 import Data.Maybe
 import Safe
 
+import Class (Class)
 import CoreMonad
 import DynFlags
 import HscTypes hiding (lookupDataCon, lookupType)
@@ -28,7 +29,11 @@ instance MonadFix Ghc where
   -- stolen from ghc source
   mfix f = Ghc $ \s -> mfix (\x -> unGhc (f x) s)
 
-type TypeLookupM a = Reader (TypeEnv, HomePackageTable, PackageTypeEnv, DynFlags) a
+type TypeLookupM a = Reader ( TypeEnv
+                            , HomePackageTable
+                            , PackageTypeEnv
+                            , DynFlags)
+                            a
 
 withTypeLookups :: TypeEnv -> TypeLookupM a -> Ghc a
 withTypeLookups typeEnv f = do
@@ -145,6 +150,11 @@ lookupNameEnvString n space pte
   where match thing = (nameString $ getName thing) == n &&
                       (occNameSpace $ nameOccName $ getName thing) == space
 
+lookupTypeClassString :: String -> TypeLookupM Class
+lookupTypeClassString clsNameS = fmap (tyThingClass . fromJustNote 
+                                         ("lookupTypeClassString " ++ clsNameS)) $
+                                 lookupInctimeTyThing clsNameS OccName.tcName
+
 incrementalisedDictionaryType :: Type -> Type -> TypeLookupM Type
 incrementalisedDictionaryType baseType incrementalisedType = do
   inc <- liftM (mkTyConTy . tyThingTyCon . fromJustNote
@@ -154,14 +164,17 @@ incrementalisedDictionaryType baseType incrementalisedType = do
                                      OccName.tcName)
   return $ mkAppTys inc [baseType, incrementalisedType]
 
+
+
 applicableDictionaryType :: Type -> Type -> TypeLookupM Type
 applicableDictionaryType baseType incrementalisedType = do
-  inc <- liftM (mkTyConTy . tyThingTyCon . fromJustNote
+  app <- liftM (mkTyConTy . tyThingTyCon . fromJustNote
                  ("The type of the ApplicableIncrementalised "++
                   "typeclass dictionary"))
                (lookupInctimeTyThing "T:ApplicableIncrementalised"
                                      OccName.tcName)
-  return $ mkAppTys inc [baseType, incrementalisedType]
+
+  return $ mkAppTys app [baseType, incrementalisedType]
 
 
 

@@ -19,6 +19,10 @@ import DynFlags
 import ErrUtils
 import HscTypes hiding (lookupDataCon, lookupType)
 import HscMain
+import IfaceSyn (IfaceInst (..))
+import IfaceType (toIfaceTyCon_name)
+import InstEnv (extendInstEnvList, instEnvElts,
+                is_cls, is_dfun, is_tys, is_tcs, is_tvs, is_flag)
 import Literal
 import Module
 import Outputable
@@ -46,26 +50,42 @@ import Utils
 
 mutantCoreModule mod dm = do
   coreMod <- mutantModGuts mod (dm_core_module dm)
-  return dm { dm_core_module = coreMod }
+  return $ dm { dm_core_module = coreMod }
 
 mutantModGuts mod mg = do
-  (tyEnv, typeclassBinds) <- mutantTypeEnv (mg_types mg)
+  (tyEnv, typeclassBinds, instances) <- mutantTypeEnv (mg_types mg)
   coreBinds <- withTypeLookups tyEnv $ mutantCoreBinds (mg_binds mg)
-  return mg { mg_binds = coreBinds ++ typeclassBinds
-            , mg_types = tyEnv
-            , mg_dir_imps  = mutantDeps (mg_dir_imps mg) mod
-            , mg_exports = mutantAvailInfos (mg_exports mg)
-            }
+  let newIfaceInsts = map (\inst -> IfaceInst {
+                              ifDFun = varName $ is_dfun inst
+                             ,ifOFlag = is_flag inst
+                             ,ifInstCls = is_cls inst
+                             ,ifInstTys = map (fmap toIfaceTyCon_name)
+                                              (is_tcs inst)
+                             ,ifInstOrph = Nothing -- should be safe, since all
+                                                   -- instances we generate are
+                                                   -- for types defined in this
+                                                   -- module
+                            }
+                          )
+                          instances
+  return $ mg { mg_binds = coreBinds ++ typeclassBinds
+               , mg_types = tyEnv
+               , mg_dir_imps  = mutantDeps (mg_dir_imps mg) mod
+               , mg_exports = mutantAvailInfos (mg_exports mg)
+               , mg_inst_env = extendInstEnvList (mg_inst_env mg) instances
+               , mg_insts = instances
+               }
 
 mutantTypeEnv env = do
-  rec { (result, classBinds) <- withTypeLookups result $ do
-          elt_classBinds <- mapM mutantTyThing $ typeEnvElts env
-          let classBinds = concatMap snd elt_classBinds
-          let newElts = map fst elt_classBinds ++
-                        map AnId (bindersOfBinds classBinds)
-          return (extendTypeEnvList env newElts, classBinds)
+  rec { (result, classBinds, instances) <- withTypeLookups result $ do
+          elt_classBinds_instances <- mapM mutantTyThing $ typeEnvElts env
+          let elts       = map       (\(a,_,_) -> a) elt_classBinds_instances
+          let classBinds = concatMap (\(_,b,_) -> b) elt_classBinds_instances
+          let instances  = concatMap (\(_,_,c) -> c) elt_classBinds_instances
+          let newElts = elts ++ map AnId (bindersOfBinds classBinds)
+          return (extendTypeEnvList env newElts, classBinds, instances)
       }
-  return (result, classBinds)
+  return (result, classBinds, instances)
 
 mutantDeps imps mod = extendModuleEnv imps mod [(inctimeName, False, noSrcSpan)]
 
@@ -76,11 +96,13 @@ mutantAvailInfo i@(AvailTC name names) = [i, AvailTC (mutantName name)
                                                      (map mutantName names)]
 
 
-mutantTyThing :: TyThing -> TypeLookupM (TyThing, [CoreBind])
-mutantTyThing (AnId id) = mutantId id >>= return . (,[]) . AnId
-mutantTyThing (ADataCon con) = mutantDataCon con >>= return . (,[]) . ADataCon
-mutantTyThing (ATyCon con) = mutantTyCon con >>= return . (\(c,bs) -> (ATyCon c, bs))
-mutantTyThing (AClass cls) = return $ (AClass $ mutantClass cls, [])
+mutantTyThing :: TyThing -> TypeLookupM (TyThing, [CoreBind], [Instance])
+mutantTyThing (AnId id) = mutantId id >>= return . (,[],[]) . AnId
+mutantTyThing (ADataCon con) = mutantDataCon con 
+                                 >>= return . (,[],[]) . ADataCon
+mutantTyThing (ATyCon con) = mutantTyCon con
+                                 >>= return . (\(c,bs,is) -> (ATyCon c, bs, is))
+mutantTyThing (AClass cls) = return $ (AClass $ mutantClass cls, [],[])
 
 mutantCoreBinds = (fmap concat . mapM mutantCoreBind)
 
@@ -312,7 +334,7 @@ typeFor v
  | isTyVar v = mkTyVarTy v
  | otherwise = varType v
 
-process targetFile moduleName = do
+process targetFile modName = do
   defaultErrorHandler defaultDynFlags $ do
     runGhc (Just libdir) $ do
       dflags <- getSessionDynFlags
@@ -322,7 +344,8 @@ process targetFile moduleName = do
                                     , Opt_MagicHash]
       let dflags_dopts = foldl dopt_set dflags_xopts
                                     [Opt_EmitExternalCore
-                                    , Opt_ForceRecomp]
+                                    , Opt_ForceRecomp
+                                    , Opt_D_dump_hi]
                                     --, Opt_D_verbose_core2core]
       let dflags' = dflags_dopts -- { verbosity = 4 }
       liftIO $ addWay WayDebug
@@ -335,7 +358,7 @@ process targetFile moduleName = do
       liftIO $ putStrLn "loaded. Getting modSum."
       modGraph <- getModuleGraph
       liftIO $ putStrLn $ showSDoc $ ppr modGraph
-      modSum <- getModSummary $ mkModuleName moduleName
+      modSum <- getModSummary $ mkModuleName modName
       liftIO $ putStrLn "Got modSum. Parsing."
       p <- parseModule modSum
       t <- typecheckModule p
@@ -344,6 +367,8 @@ process targetFile moduleName = do
       liftIO $ do
         showAllModuleContents $ mg_types $ dm_core_module $ d'
         putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d'
+        putStrLn $ showSDoc $ ppr $ mg_inst_env $ dm_core_module d'
+        printAllInsts $ instEnvElts $ mg_inst_env $ dm_core_module d'
         putStrLn $ ms_hspp_file modSum
 
       liftIO $ do
@@ -351,10 +376,17 @@ process targetFile moduleName = do
 
       setSessionDynFlags $ dflags' { hscOutName = targetFile ++ ".s"
                                    , extCoreName = targetFile ++ ".hcr"
-                                   , outputFile = Just $ targetFile ++ ".o"
-                                   }
-      (hscGenOutput hscBatchCompiler) (dm_core_module d') modSum Nothing
-      cg <- cgGutsFromModGuts $ dm_core_module d'
+                                   , outputFile = Just $ targetFile ++ ".o"}
+
+      simplifiedCore <- hscSimplify $ dm_core_module d'
+      (cg, detailsFromGuts) <- cgGutsFromModGuts $ dm_core_module d'
+      liftIO $ do
+        putStrLn $ showSDoc $ ppr $ mg_binds simplifiedCore
+        putStrLn "SIMPLIFIED"
+        putStrLn $ showSDoc $ ppr $ mg_inst_env simplifiedCore
+        putStrLn "TIDIED"
+        putStrLn $ showSDoc $ ppr $ md_insts detailsFromGuts
+      (hscGenOutput hscBatchCompiler) simplifiedCore modSum Nothing
       liftIO $ do
         js <- concreteJavascriptFromCgGuts dflags' $ cg
         writeFile (targetFile ++ ".js") js
@@ -389,12 +421,11 @@ concreteJavascriptFromCgGuts dflags core =
      return $ show (abstract :: Js.Formatted)
 
 -- this one stolen from the same place
-cgGutsFromModGuts :: GhcMonad m => ModGuts -> m CgGuts
+cgGutsFromModGuts :: GhcMonad m => ModGuts -> m (CgGuts, ModDetails)
 cgGutsFromModGuts guts =
   do hscEnv <- getSession
      simplGuts <- hscSimplify guts
-     (cgGuts, _) <- liftIO $ tidyProgram hscEnv simplGuts
-     return cgGuts
+     liftIO $ tidyProgram hscEnv simplGuts
 
 
 showAllModulesContents :: Ghc ()
@@ -424,3 +455,11 @@ showDataConDetails dataCon = (concat $ List.intersperse "\n" [
   ,("  tyCon " ++ (showSDoc $ ppr $ dataConTyCon dataCon))
   ,("  repType " ++ (showSDoc $ ppr $ dataConRepType dataCon))
   ,("  stupidTheta " ++ (showSDoc $ ppr $ dataConStupidTheta dataCon))])
+
+printAllInsts insts = forM insts $ \inst -> do
+  putStrLn $ "Class is " ++ (nameString $ is_cls inst)
+  putStrLn $ "Type is " ++ (showSDoc $ ppr $ varType $ is_dfun inst)
+  putStrLn $ "Tys are" ++ (showSDoc $ ppr $ is_tys inst)
+  putStrLn $ "RoughMatch tcs are " ++ (showSDoc $ ppr $ is_tcs inst)
+  putStrLn $ "Tvs are " ++ (showSDoc $ ppr $ is_tvs inst)
+

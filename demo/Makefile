@@ -29,4 +29,4 @@ B.hcr: B.hs
 
 
 clean:
-	rm -f *.hcr *.hi *.o Bprime.hs Bprime.instances.hs Bprime.dbinstances.hs Bprime Bprime-web Bprime-web-db db
+	rm -f *.hcr *.hi *.o Bprime.hs Bmain Bweb B.s B.js 
