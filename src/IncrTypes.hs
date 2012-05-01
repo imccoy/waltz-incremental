@@ -36,18 +36,40 @@ import Utils
 
 
 mutantId :: Var -> TypeLookupM Var
-mutantId var = liftM (mk var') (mutantType $ varType var)
+mutantId var = mk var' =<< (mutantType $ varType var)
   where var' | List.isPrefixOf "$f" (occNameString $ nameOccName $ varName var)
              = mutantClsName (mutantName $ varName var) $ varType var
              | otherwise                                    
              = (mutantName $ varName var)
-        mk n t | isTcTyVar var  = mkTcTyVar n t (tcTyVarDetails var)
-               | isTyVar var    = mkTyVar n t
-               | isGlobalId var = mkGlobalVar VanillaId n t vanillaIdInfo
-               | isLocalVar var = local_mk    VanillaId n t vanillaIdInfo
+        mk :: Name -> Type -> TypeLookupM Var
+        mk n t | isTcTyVar var  = return $ mkTcTyVar n t (tcTyVarDetails var)
+               | isTyVar var    = return $ mkTyVar n t
+               | isGlobalId var = buildExpId mkGlobalVar
+               | isLocalVar var = buildExpId local_mk
+               where buildExpId mk' = liftM4 mk'
+                                             (details var)
+                                             (return n)
+                                             (return t)
+                                             (return vanillaIdInfo)
         local_mk | isExportedId var  = mkExportedLocalVar
                  | otherwise         = mkLocalVar
+        details var = mutantIdDetails (idDetails var)
 
+mutantIdDetails VanillaId = return VanillaId
+mutantIdDetails (RecSelId tyCon naughty) = liftM2 RecSelId
+                                                  (lookupMutantTyCon tyCon)
+                                                  (return naughty)
+mutantIdDetails (DataConWorkId dataCon) = liftM DataConWorkId
+                                                (lookupMutantDataCon dataCon)
+mutantIdDetails (DataConWrapId dataCon) = liftM DataConWrapId
+                                                (lookupMutantDataCon dataCon)
+mutantIdDetails (ClassOpId cls) = liftM ClassOpId
+                                        (lookupMutantClass cls)
+mutantIdDetails details@(PrimOpId _) = return details
+mutantIdDetails details@(FCallId _) = return details
+mutantIdDetails details@(TickBoxOpId _) = return details
+mutantIdDetails details@(DFunId _ _) = return details
+                                                         
 
 lookupOrMutantId :: Var -> TypeLookupM Var
 lookupOrMutantId var = do
@@ -152,7 +174,7 @@ mutantAlgTyConRhs tyCon (DataTyCon dataCons isEnum) = do
   return $ DataTyCon (mutantDataCons ++ 
                       additionalMutantDataCons tyCon newTyCon ++
                       concatMap (builderMutantDataCons tyCon newTyCon) dataCons)
-                     isEnum
+                     False
 mutantAlgTyConRhs _ (NewTyCon dataCon rhs etadRhs co) = do
   dataCon' <- lookupMutantDataCon dataCon
   mutantCo <- maybe (return Nothing) ((fmap Just) . lookupMutantTyCon) co
@@ -175,11 +197,11 @@ mutantDataCon dataCon = do
                       (mapM mutantTyVar $ dataConUnivTyVars dataCon)
   exTyVars <- mapM mutantTyVar $ dataConExTyVars dataCon
   eqSpec <- map2M mutantTyVar mutantType $ dataConEqSpec dataCon
-  dcIds <- liftM2 DCIds (case dataConWrapId_maybe dataCon of
-                          Just m    -> do m' <- mutantId m
-                                          return $ Just m'
-                          otherwise -> return Nothing)
-                        (mutantId $ dataConWorkId dataCon)
+  wrapper' <- case dataConWrapId_maybe dataCon of
+                          Just m    -> mutantId m >>= return . Just
+                          otherwise -> return Nothing
+  worker' <- mutantId $ dataConWorkId dataCon
+  let dcIds = DCIds wrapper' worker'
   return $ mkDataCon 
     (mutantName $ dataConName dataCon)
     (dataConIsInfix dataCon)
