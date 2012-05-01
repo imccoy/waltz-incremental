@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings, ScopedTypeVariables, MultiParamTypeClasses,
              ExistentialQuantification, UndecidableInstances,
-             Rank2Types, FunctionalDependencies, FlexibleContexts #-}
+             Rank2Types, FunctionalDependencies, FlexibleContexts,
+             MagicHash #-}
 module Inctime where
 
 import Data.Maybe (fromJust, maybeToList)
@@ -189,30 +190,6 @@ instance (Incrementalised elem elem_incrementalised) =>
   mkIncrementalisedIdentity = BuiltinList_incrementalised_identity
   mkIncrementalisedReplace e = BuiltinList_incrementalised_replace e
   mkIncrementalisedHoist = BuiltinList_incrementalised_hoist
-
-
--- head_incrementalised :: forall base. forall incrementalised.
---         Inctime.Incrementalised
---           [Char]
---           incrementalised =>
---         Inctime.BuiltinList_incrementalised
---           [Char]
---           (Inctime.BuiltinList_incrementalised Char Inctime.Char_incrementalised)
---         -> incrementalised
--- head_incrementalised (BuiltinList_incrementalised_build_using_1 new_head)
---   = mkIncrementalisedReplace new_head
--- head_incrementalised _ = error "can't do incrementalised head"
-
---head_incrementalised :: forall base. forall incrementalised.
---        Inctime.BuiltinList_incrementalised
---          [Char]
---          (Inctime.BuiltinList_incrementalised Char Inctime.Char_incrementalised)
---        -> BuiltinList_incrementalised Char Char_incrementalised
---head_incrementalised (BuiltinList_incrementalised_build_using_1 new_head)
---  = (mkIncrementalisedReplace new_head) :: BuiltinList_incrementalised Char Char_incrementalised
---head_incrementalised _ = error "can't do incrementalised head"
---head_incrementalised (ZC_incrementalised_build_using_1 new_head :: BuiltinList_incrementalised [a] (BuiltinList_incrementalised a a_incrementalised)) = BuiltinList_incrementalised_incrementalised_replace new_head :: a_incrementalised
---head_incrementalised _ = error "can't do incrementalised head"
 
 head_incrementalised :: forall base. forall incrementalised.
          Incrementalised [Char] (BuiltinList_incrementalised Char Char_incrementalised)

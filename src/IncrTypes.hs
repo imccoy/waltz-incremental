@@ -473,21 +473,23 @@ makeClassInstance clsNameS tyCon mutantTyCon args fns = do
 
 incrementalisedClassBind :: TyCon -> TyCon -> TypeLookupM (CoreBind)
 incrementalisedClassBind tyCon mutantTyCon = do
-  let mkTestAlts f alts
-        = Lam (testVar 0) $
+  let mkTestAlts n f alts
+        = Lam (testVar n) $
             f $
-              Case (Var $ testVar 0)
-                   (testVar 0)
+              Case (Var $ testVar n)
+                   (testVarC n)
                    (mkTyConTy boolTyCon)
                    ((DEFAULT, [], Var falseDataConId):alts)
-  let mkTest addConType argTypes
-        = mkTestAlts id $
+  let mkTest n addConType argTypes
+        = mkTestAlts n id $
                       [(DataAlt $ lookupDataConByAdd (mkTyConTy mutantTyCon)
                                                      addConType
                       , testArgVars baseName argTypes
                       , Var trueDataConId)]
-  let isReplace = mkTest AddConReplacement [baseType] 
-  let isHoist = mkTest AddConHoist []
+  let isReplace = mkTest 0 AddConReplacement [baseType] 
+  let isHoist = mkTest 1 AddConHoist []
+  let isIdentity = mkTest 2 AddConIdentity []
+
   dataCons_builderCons <- do
     let dataCons_indexes :: [(DataCon, Int)]
           = concat $ map (\dataCon -> 
@@ -510,8 +512,6 @@ incrementalisedClassBind tyCon mutantTyCon = do
                  ,App (Var $ dataConWrapId intDataCon)
                       (Lit $ mkMachInt $ fromIntegral i)]
 
-  let isIdentity = mkTest AddConIdentity []
-
   let mkBuilder addConType argTypes
         = mkLams (testArgVars baseName argTypes)
                  (mkApps (dataConValueByType addConType (mkTyConTy mutantTyCon))
@@ -526,9 +526,9 @@ incrementalisedClassBind tyCon mutantTyCon = do
 
   extractReplace <- do
     let buildValueVar = head $ testArgVars baseName [baseType]
-    return $ Lam (testVar 0) $
-               Case (Var $ testVar 0)
-                    (testVar 0)
+    return $ Lam (testVar 3) $
+               Case (Var $ testVar 3)
+                    (testVarC 3)
                     baseType
                     ((DEFAULT, [], App callUndefined 
                                        (Type baseType)):
@@ -551,6 +551,7 @@ incrementalisedClassBind tyCon mutantTyCon = do
                     , extractReplace]
   where baseName = "Incrementalised" ++ (nameString $ getName $ tyCon)
         testVar = testArgVar baseName incrementalisedType
+        testVarC = testArgVar (baseName ++ "C") incrementalisedType
         
         baseType = mkTyConAppTy tyCon 
         incrementalisedType = mkTyConAppTy mutantTyCon
@@ -600,7 +601,7 @@ applicableClassBind tyCon mutantTyCon = do
                         return (DataAlt mutantDataCon
                                ,mutantVars
                                ,Case (Var initialVar)
-                                     initialVar
+                                     initialVarC
                                      baseType
                                      [(DataAlt dataCon
                                       ,initialVars
@@ -609,12 +610,15 @@ applicableClassBind tyCon mutantTyCon = do
                       )
                       (tyConDataCons tyCon)
 
+  undefinedFn <- lookupPreludeFn "" "undefined"
+
   let fn = Lam changeVar $
              Lam initialVar $
                Case (Var changeVar)
-                    changeVar
+                    changeVarC
                     baseType
-                    (dataConAlts ++
+                    ([(DEFAULT, [], (App (Var undefinedFn) (Type baseType)))
+                      ] ++dataConAlts ++
                       [(DataAlt $ lookupDataConByAdd (mkTyConTy mutantTyCon)
                                                      AddConReplacement
                         ,[replaceVar]
@@ -642,7 +646,9 @@ applicableClassBind tyCon mutantTyCon = do
         incrementalisedType = mkTyConAppTy mutantTyCon
         baseName = "applicableIncrementalised" ++ (nameString $ getName tyCon)
         changeVar = testArgVar (baseName ++ "Change") incrementalisedType 0
+        changeVarC = testArgVar (baseName ++ "ChangeC") incrementalisedType 0
         initialVar = testArgVar (baseName ++ "Initial") baseType 0
+        initialVarC = testArgVar (baseName ++ "InitialC") baseType 0
         replaceVar = testArgVar (baseName ++ "Replace") baseType 0
         boolVar = testArgVar (baseName ++ "Test") boolTy 0
  

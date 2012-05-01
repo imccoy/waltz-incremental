@@ -1,2 +1,2 @@
 sh compile-b.sh && \
-ghc -rtsopts -debug Bmain.hs
+ghc -rtsopts Bmain.hs

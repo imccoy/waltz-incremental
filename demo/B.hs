@@ -1,5 +1,7 @@
 module B where
 import Inctime
+import Debug.Trace
+import Prelude
 
 data TryInt =  TryIntP Int
 

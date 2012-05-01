@@ -35,6 +35,10 @@ type TypeLookupM a = Reader ( TypeEnv
                             , DynFlags)
                             a
 
+withTypeLookupsDefault :: TypeLookupM a -> Ghc a
+withTypeLookupsDefault f = do
+  withTypeLookups emptyTypeEnv f
+
 withTypeLookups :: TypeEnv -> TypeLookupM a -> Ghc a
 withTypeLookups typeEnv f = do
   session <- getSession

@@ -10,6 +10,11 @@ main = do
   putStrLn $ show $ applyInputChange (words_length_stringy_incrementalised
                                         change) 
                                      (words_length prior)
+ 
+  putStrLn $ "abcdef"
+  putStrLn $ applyInputChange (head_incrementalised change)
+                              (head prior)
+  
   putStrLn $ show $ app_state ["abcdef", "abc"]
   putStrLn $ show $ applyInputChange (app_state_incrementalised change)
                                      (app_state prior)

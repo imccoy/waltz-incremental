@@ -23,10 +23,8 @@ import IfaceSyn (IfaceInst (..))
 import IfaceType (toIfaceTyCon_name)
 import InstEnv (extendInstEnvList,
                 is_cls, is_dfun, is_tys, is_tcs, is_tvs, is_flag)
-import Literal
 import Module
 import Outputable
-import StaticFlags
 import Type
 import TysWiredIn
 import UniqFM
@@ -46,6 +44,7 @@ import AdditionalDataCons
 import Lookups
 import Names
 import IncrTypes
+import Tracer
 import Utils
 
 mutantCoreModule mod dm = do
@@ -104,14 +103,15 @@ mutantTyThing (ATyCon con) = mutantTyCon con
                                  >>= return . (\(c,bs,is) -> (ATyCon c, bs, is))
 mutantTyThing (AClass cls) = return $ (AClass $ mutantClass cls, [],[])
 
-mutantCoreBinds = (fmap concat . mapM mutantCoreBind)
+mutantCoreBinds = mapM mutantCoreBind
 
 mutantCoreBind corebind@(NonRec name exp) = do
-  newBind <- liftM2 NonRec (mutantCoreBndr name) (mutantExp exp)
-  return [corebind, newBind]
+  name' <- mutantCoreBndr name
+  exp' <- mutantExp exp
+  return $ Rec [(name,exp), (name', exp')]
 mutantCoreBind corebinds@(Rec name_exps) = do
   newNameExps <- map2M mutantCoreBndr mutantExp name_exps
-  return [Rec $ name_exps ++ newNameExps]
+  return $ Rec $ name_exps ++ newNameExps
 
 mutantCoreBndr = mutantId
 
@@ -168,18 +168,15 @@ mutantExp (Lam id expr) = do
 
   return result
 
-mutantExp (Let bind expr) = liftM2 (foldl (\e b -> Let b e))
-                                    (mutantExp expr)
-                                    (mutantCoreBind bind)
+mutantExp (Let bind expr) = liftM2 Let
+                                   (mutantCoreBind bind)
+                                   (mutantExp expr)
 mutantExp c@(Case expr id type_ alts) = liftM4 Case 
                                                 (mutantExp expr)
                                                 (mutantCoreBndr id)
                                                 (mutantType type_)
                                                 (introduceSpecialAltCases c =<<
                                                  mutantAlts alts)
-                                                  -- use the list monad return
-                                                  -- fmap return (replaceAlt' c),
-                                                  --builderAlts' c])
 mutantExp (Cast expr coercion) = liftM2 Cast
                                          (mutantExp expr)
                                          (mutantType coercion)
@@ -293,9 +290,14 @@ builderAltAtIndex' (Case c_expr c_id c_type c_alts)
                      :(map (\(id, val) -> NonRec id val)
                            (zip builderArgsIds builderArgsValues)))
                     expr')
+  c_id' <- do
+    var <- mutantCoreBndr c_id
+    let suffix = "builder" ++ show builderConIndex
+    let name = mutantNameUniqueLocal (varName var) suffix
+    return $ setVarName var name
 
   liftM4 Case (mutantExp c_expr)
-              (mutantCoreBndr c_id)
+              (return c_id')
               (mutantType c_type)
               (return [(DEFAULT, [], def),alt])
   where type_ = dataConOrigResTy dataCon
@@ -318,23 +320,13 @@ mutantClass = id
 exprVar (Var id) = id
 exprVar other = error ("exprVar " ++ (showSDoc $ ppr other))
 
-exprType :: Expr CoreBndr -> Type
-exprType (Var id) = varType id
-exprType (Lit lit) = literalType lit
-exprType (App expr arg) = snd $ splitFunTys (exprType expr)
-exprType (Lam id expr) = mkFunTy (varType id) (exprType expr)
-exprType (Let bind expr) = exprType expr
-exprType (Case expr id type_ alts) = type_
-exprType (Cast expr coercion) = coercion
-exprType (Type type_) = type_
-exprType (Note note expr) = exprType expr
-
 typeFor :: Var -> Type
 typeFor v
  | isTyVar v = mkTyVarTy v
  | otherwise = varType v
 
 process targetFile modName = do
+  --addWay WayProf
   defaultErrorHandler defaultDynFlags $ do
     runGhc (Just libdir) $ do
       dflags <- getSessionDynFlags
@@ -348,7 +340,6 @@ process targetFile modName = do
                                     , Opt_D_dump_hi]
                                     --, Opt_D_verbose_core2core]
       let dflags' = dflags_dopts -- { verbosity = 4 }
-      liftIO $ addWay WayDebug
       setSessionDynFlags dflags'
       target <- guessTarget targetFile Nothing
       target_runtime <- guessTarget "Inctime" Nothing
@@ -363,21 +354,23 @@ process targetFile modName = do
       p <- parseModule modSum
       t <- typecheckModule p
       d <- desugarModule t
-      d' <- mutantCoreModule (ms_mod modSum) d
+      d' <- mutantCoreModule (ms_mod modSum) (verifySingularVarDecsCoreModule d)
+                 -- >>= traceCoreModuleG
       liftIO $ do
         showAllModuleContents $ mg_types $ dm_core_module $ d'
-        putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d'
+        putStrLn $ showSDocDebug $ ppr $ mg_binds $ dm_core_module d'
         putStrLn $ ms_hspp_file modSum
 
       liftIO $ do
         lintPrintAndFail d'
+                    
 
       setSessionDynFlags $ dflags' { hscOutName = targetFile ++ ".s"
                                    , extCoreName = targetFile ++ ".hcr"
                                    , outputFile = Just $ targetFile ++ ".o"}
 
-      (cg, _) <- cgGutsFromModGuts $ dm_core_module d'
       (hscGenOutput hscBatchCompiler) (dm_core_module d') modSum Nothing
+      (cg, _) <- cgGutsFromModGuts $ dm_core_module $ verifySingularVarDecsCoreModule d'
       liftIO $ do
         js <- concreteJavascriptFromCgGuts dflags' $ cg
         writeFile (targetFile ++ ".js") js

@@ -9,10 +9,10 @@ B.hi: B.hs $(Incrementaliser)
 	$(Incrementaliser) B && as B.s -o B.o
 
 Bmain: B.hi Inctime.hs Bmain.hs
-	ghc --make Bmain.hs
+	ghc --make Bmain.hs -fext-core
 
-Bweb: B.hs Inctime.hs Bweb.hs
-	ghc -o Bweb B.hs Bweb.hs Inctime.hs
+Bweb: B.hi Inctime.hs Bweb.hs
+	ghc --make Bweb.hs -fext-core
 
 Bprime-web-db: Bprime.hs ../support/Radtime.hs ../support/DbRadtime.hs Bprime.web.hs Bprime.dbinstances.hs
 	ghc -o Bprime-web Bprime.hs Bprime.dbweb.hs Bprime.dbinstances.hs Bprime.dbinstances-manual.hs ../support/Radtime.hs ../support/DbRadtime.hs

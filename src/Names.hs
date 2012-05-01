@@ -21,10 +21,12 @@ mutantNameUnique oldName nameSpace suffix
   = setNameUnique oldName (nameUnique mutantName)
   where mutantName = mutantNameIntoSpace oldName nameSpace suffix
 
+mutantNameUniqueLocal oldName suffix
+  = mutantNameUnique oldName (occNameSpace $ nameOccName oldName) suffix
+
 mutantName oldName = mutantNameIntoSpace oldName
                                          (occNameSpace $ nameOccName oldName)
                                          "incrementalised"
-
 
 mutantNameIntoSpace :: Name -> NameSpace -> String -> Name
 mutantNameIntoSpace oldName nameSpace suffix
