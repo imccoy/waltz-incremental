@@ -180,8 +180,11 @@ dupVarDecsExp names path e@(Let bind expr) =
         pathE = addPathS pathL "exp"
 
 dupVarDecsExp names path e@(Case expr id type_ alts) =
-  withName names (path,id) $ dupVarDecsExp names pathC expr ++ alts_dups 
-  where alts_dups = concatMap alt_dups alts
+  withName names (path,id) $ scrutinee_dups ++ alts_dups 
+  where scrutinee_dups = dupVarDecsExp ((addPathS pathC "Scrutinee",id):names)
+                                       pathC
+                                       expr 
+        alts_dups = concatMap alt_dups alts
         alt_dups (alt,args,alt_exp) =
           let pathA = addPathS pathC $ 
                                "Alt " ++ (showSDoc $ ppr alt)

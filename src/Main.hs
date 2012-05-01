@@ -203,8 +203,8 @@ introduceSpecialAltCases c alts = do
   let (defaultAlts, nonDefaultAlts)
         = List.partition (\(a, _, _) -> a == DEFAULT) alts
   r <- replaceAlt' c defaultAlts
-  b <- builderAlts' c r
-  return $ [(DEFAULT, [], b)] ++ nonDefaultAlts
+  b <- builderAlts' c
+  return $ [(DEFAULT, [], r)] ++ nonDefaultAlts ++ b
 
 
 replaceAlt' c@(Case expr id type_ alts) defaultAlts = do
@@ -242,8 +242,8 @@ replaceAlt' c@(Case expr id type_ alts) defaultAlts = do
                 )
 
 
-builderAlts' c@(Case expr id type_ alts) def
-  = foldM (builderAlt' c) def alts
+builderAlts' c@(Case expr id type_ alts)
+  = liftM concat $ mapM (builderAlt' c) alts
 
 -- This is all about building a new value around an old one, for instance
 -- consing an element onto the head of a list.  n is the index of the argument
@@ -266,15 +266,16 @@ builderAlts' c@(Case expr id type_ alts) def
 -- we construct replace values for each argument provided as part of the
 -- incrementalised_build constructor and assign them to the incrementalised
 -- name of the argument.
-builderAlt' c def a@(DataAlt dataCon, binds, expr)
-  = foldM (builderAltAtIndex' c a) 
-          def
-          (builderMutantDataConIndexes dataCon)
-builderAlt' c def a = return def
+-- 
+-- TODO: Since we're not doing the builders type-classily, we don't need this
+-- crazy thing where we make a new case expr for each alt
+builderAlt' c a@(DataAlt dataCon, binds, expr)
+  = mapM (builderAltAtIndex' c a) 
+         (builderMutantDataConIndexes dataCon)
+builderAlt' c a = return []
 
 builderAltAtIndex' (Case c_expr c_id c_type c_alts)
                    (DataAlt dataCon, vars, expr)
-                   def
                    builderConIndex = do
   type_' <- mutantType type_
   let builderCon = lookupDataConByBuilderIndex type_'
@@ -284,22 +285,13 @@ builderAltAtIndex' (Case c_expr c_id c_type c_alts)
   builderArgsIds <- mapM mutantId builderArgs
   builderArgsValues <- mapM replaceValue builderArgs
   expr' <- mutantExp expr
-  let alt = (DataAlt builderCon
-            ,builderArgs
-            ,mkLets ((NonRec replaceVarId replaceVarValue)
-                     :(map (\(id, val) -> NonRec id val)
-                           (zip builderArgsIds builderArgsValues)))
-                    expr')
-  c_id' <- do
-    var <- mutantCoreBndr c_id
-    let suffix = "builder" ++ show builderConIndex
-    let name = mutantNameUniqueLocal (varName var) suffix
-    return $ setVarName var name
+  return (DataAlt builderCon
+         ,builderArgs
+         ,mkLets ((NonRec replaceVarId replaceVarValue)
+                  :(map (\(id, val) -> NonRec id val)
+                        (zip builderArgsIds builderArgsValues)))
+                 expr')
 
-  liftM4 Case (mutantExp c_expr)
-              (return c_id')
-              (mutantType c_type)
-              (return [(DEFAULT, [], def),alt])
   where type_ = dataConOrigResTy dataCon
         builderArgs = listWithout builderConIndex vars
         replaceVar = vars !! builderConIndex
