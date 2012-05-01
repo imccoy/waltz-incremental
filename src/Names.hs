@@ -28,10 +28,15 @@ mutantName oldName = mutantNameIntoSpace oldName
 
 mutantNameIntoSpace :: Name -> NameSpace -> String -> Name
 mutantNameIntoSpace oldName nameSpace suffix
-  = sameSortOfName oldName occName mod
+  = setNameUnique (sameSortOfName oldName occName mod)
+                  (getUnique occNameUnique)
   where 
     nameString = (adaptName oldName) ++ "_" ++ suffix
     occName = mkOccName nameSpace nameString
+    mod = case nameModule_maybe oldName of
+            Just mod' -> moduleNameString $ moduleName mod'
+            otherwise -> ""
+    occNameUnique = mkOccName nameSpace (mod ++ "." ++ nameString)
 
 adaptName name = adaptName' $ occNameString $ nameOccName name
   where adaptName' "ds" = "ds" ++ (show $ getUnique name)
