@@ -1,18 +1,25 @@
 bindir=../dist/build/
 Incrementaliser=$(bindir)/Incrementaliser/Incrementaliser
+ghcjs=../../ghcjs/dist/build/ghcjs/ghcjs
 
 default: Bmain Bweb
 	./Bmain
 	echo "try Bweb or Bprime-web-db for moar fun"
 
-B.hi: B.hs $(Incrementaliser)
+B.hi: B.hs $(Incrementaliser) InctimeHtml.hi
 	$(Incrementaliser) B && as B.s -o B.o
+
+InctimeHtml.hi: InctimeHtml.hs $(Incrementaliser)
+	$(Incrementaliser) InctimeHtml && as InctimeHtml.s -o InctimeHtml.o
 
 Bmain: B.hi Inctime.hs Bmain.hs
 	ghc --make Bmain.hs -fext-core
 
-Bweb: B.hi Inctime.hs Bweb.hs
-	ghc --make Bweb.hs -fext-core
+Bweb: Bweb.js B.hi Inctime.hs InctimeHtml.hi InctimeWeb.hs Bweb.hs BwebMain.hs
+	ghc --make -o Bweb BwebMain.hs -fext-core
+
+Bweb.js: Bweb.hs
+	$(ghcjs) Bweb.hs
 
 Bprime-web-db: Bprime.hs ../support/Radtime.hs ../support/DbRadtime.hs Bprime.web.hs Bprime.dbinstances.hs
 	ghc -o Bprime-web Bprime.hs Bprime.dbweb.hs Bprime.dbinstances.hs Bprime.dbinstances-manual.hs ../support/Radtime.hs ../support/DbRadtime.hs
@@ -29,4 +36,4 @@ B.hcr: B.hs
 
 
 clean:
-	rm -f *.hcr *.hi *.o Bprime.hs Bmain Bweb B.s B.js 
+	rm -f *.hcr *.hi *.o Bmain Bweb B.s B.js

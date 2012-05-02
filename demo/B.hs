@@ -1,7 +1,6 @@
 module B where
 import Inctime
-import Debug.Trace
-import Prelude
+import InctimeHtml
 
 data TryInt =  TryIntP Int
 
@@ -28,3 +27,26 @@ words_length (w:ws) = (length w) + (words_length ws)
 -- relevant typeclass argument.
 words_length_stringy :: [String] -> Int
 words_length_stringy = words_length
+
+
+page_view state = domElem "div" [
+  domElem "h1" [tElem "The Word Monster"],
+  domElem "p" [
+    tElem "I'm the word monster. Words are delicious! So far today, I've eaten ",
+    domElem "span" [
+      tElem (show ( appStateWordsLength state))
+    ],
+    tElem " letters."
+  ],
+  domElem "p" [
+    tElem "May I please have some more? I just had a marvellous '",
+    domElem "span" [
+      tElem (appStateMostRecentWord state)
+    ],
+    tElem "'"
+  ],
+  elemA "form" [Attr "method" "post"] [
+    elemA "input" [Attr "name" "word"] [],
+    elemA "input" [Attr "type" "submit", Attr "value" "Feed the monster!"] []
+  ]
+ ]

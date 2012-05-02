@@ -19,6 +19,7 @@ import DynFlags
 import ErrUtils
 import HscTypes hiding (lookupDataCon, lookupType)
 import HscMain
+import IdInfo (IdDetails (DataConWrapId, DataConWorkId))
 import IfaceSyn (IfaceInst (..))
 import IfaceType (toIfaceTyCon_name)
 import InstEnv (extendInstEnvList,
@@ -118,55 +119,143 @@ mutantCoreBndr = mutantId
 mutantExp :: Expr CoreBndr -> TypeLookupM (Expr CoreBndr)
 mutantExp (Var id) = liftM Var $ lookupOrMutantId id
 mutantExp (App expr arg)
+  | isDataConApp expr arg
+     && isTypeArg arg = do expr' <- mutantExp expr
+                           arg' <- mutantExp arg
+                           return $ App (App expr' arg) arg'
+  | isPrimCon expr = do let ty = exprType (App expr arg)
+                        ty' <- mutantType ty
+                        let replace = lookupDataConByAdd ty' AddConReplacement
+                        return $ App (dataConAtType replace ty')
+                                     (App expr arg)
   | isTypeArg arg = do expr' <- mutantExp expr
                        arg' <- mutantExp arg
                        argD <- expIncrementalisedDictionary arg
                        return $ App (App (App expr' arg) arg') argD
                        --return $ App (App expr' arg) arg'
   | otherwise     = liftM2 App (mutantExp expr) (mutantExp arg)
+  where isDataConApp (Var (idDetails -> (DataConWrapId _))) _ = True
+        isDataConApp (Var (idDetails -> (DataConWorkId _))) _ = True
+        isDataConApp (App exp' arg') (isTypeArg -> True) = isDataConApp exp'
+                                                                        arg'
+        isDataConApp _ _ = False
+        isPrimCon (Var id) = "#" `List.isSuffixOf` (nameString $ 
+                                                      varName id)
+        isPrimCon _ = False
 -- for \ a -> b, need to check if a is a (incrementalize_type a)_hoist. 
 -- If so, produce a (incrementalize_type b)_identity.
-mutantExp (Lam id expr) = do 
-  expr' <- mutantExp expr
-  id' <- lookupOrMutantId id
-  idD <- varIncrementalisedDictionary incrementalisedDictionaryType
-                                      id
-                                      (typeFor id)
-                                      (typeFor id')
-  let iType = varType id'
-  let oType = exprType expr'
+mutantExp expr@(Lam _ _) = do 
+  let (tyVars, valVars, exprRemaining) = collectTyAndValBinders expr
+  let suffix = concatMap (nameString . varName) valVars ++ "Ident"
+  let (additionalVarTys, finalResultTy) = splitFunTys $
+                                            snd $ splitForAllTys $
+                                              exprType exprRemaining
+  let additionalVars = map (\(ty, n) -> testArgVar (suffix ++ "Additional")
+                                                   ty
+                                                   n)
+                           $ zip additionalVarTys [1..]
+  tyVars' <- liftM concat $ forM tyVars $ \tyVar -> do
+    id' <- lookupOrMutantId tyVar
+    sequence [return tyVar
+             ,return id'
+             ,varIncrementalisedDictionary incrementalisedDictionaryType
+                                           tyVar
+                                           (mkTyVarTy tyVar)
+                                           (mkTyVarTy id')]
+  valVars' <- mapM lookupOrMutantId valVars
+  additionalVars' <- mapM lookupOrMutantId additionalVars
+  let allValVars = valVars ++ additionalVars
+  let allValVars' = valVars' ++ additionalVars'
 
-  test <- liftM2 mkApps (liftM Var incrementalisedHoistTest)
-                        (return $ [Type (varType id)
-                                  , Type iType
-                                  , Var idD
-                                  , Var id'])
-  idDvalue <- expIncrementalisedDictionary $ Type $ varType id
-  let lets = [NonRec idD idDvalue]
-                
+  finalResultTy' <- mutantType finalResultTy
+  valDicts <- forM (zip allValVars allValVars') $ \(valVar, valVar') -> do
+    dictVar <- varIncrementalisedDictionary incrementalisedDictionaryType
+                                            valVar
+                                            (varType valVar)
+                                            (varType valVar')
+    dictVal <- expIncrementalisedDictionary (Type $ varType valVar)
+    return $ NonRec dictVar dictVal
 
-  let def = (DEFAULT, [], expr')
+  scrutinee <- do
+    tests <- forM (zip allValVars allValVars') $ \(valVar, valVar') -> do
+      ts <- incrementalisedHoistTest
+      dict <- varIncrementalisedDictionary incrementalisedDictionaryType
+                                           valVar
+                                           (typeFor valVar)
+                                           (typeFor valVar')
+      return $ mkApps (Var ts) [ Type (varType valVar)
+                               , Type (varType valVar')
+                               , Var dict
+                               , Var valVar']
 
-  hoist <- do
+    and <- lookupPreludeFn "" "&&"
+    return $ foldl (\a b -> mkApps (Var and) [a,b]) 
+                   (Var $ dataConWrapId trueDataCon)
+                   tests
+      
+
+  exprRemaining' <- mutantExp exprRemaining
+
+  mkIdentity <- do
     mk <- incrementalisedIdentityMk
-    dict <- expIncrementalisedDictionary $ Type $ exprType expr
-    return (DataAlt trueDataCon
-              ,[]
-              ,mkApps (Var mk)
-                      [Type (exprType expr)
-                      , Type oType
-                      , dict]
-              )
-  let result | isTyVar id = Lam id $ Lam id' $ Lam idD expr'
-             | otherwise  = Lam id' $ mkLets lets $
-                                (Case test
-                                      (testArgVar (nameString $ varName id')
-                                                  (mkTyConTy boolTyCon)
-                                                  0)
-                                      oType
-                                      [def, hoist])
+    dict <- expIncrementalisedDictionary $ Type $ finalResultTy
+    return $ mkApps (Var mk) [ Type finalResultTy
+                             , Type finalResultTy'
+                             , dict]
 
-  return result
+  return $ mkLams (tyVars' ++ allValVars') $ 
+             mkLets valDicts $
+               Case scrutinee
+                    (testArgVar suffix
+                                (mkTyConTy boolTyCon)
+                                0)
+                    finalResultTy'
+                    [(DataAlt falseDataCon
+                     ,[]
+                     , mkApps exprRemaining' (map Var additionalVars'))
+                    ,(DataAlt trueDataCon, [], mkIdentity)]
+
+
+--  expr' <- mutantExp expr
+--  id' <- lookupOrMutantId id
+--  idD <- varIncrementalisedDictionary incrementalisedDictionaryType
+--                                      id
+--                                      (typeFor id)
+--                                      (typeFor id')
+--  let iType = varType id'
+--  let oType = exprType expr'
+--
+--  test <- liftM2 mkApps (liftM Var incrementalisedHoistTest)
+--                        (return $ [Type (varType id)
+--                                  , Type iType
+--                                  , Var idD
+--                                  , Var id'])
+--  idDvalue <- expIncrementalisedDictionary $ Type $ varType id
+--  let lets = [NonRec idD idDvalue]
+--                
+--
+--  let def = (DEFAULT, [], expr')
+--
+--  hoist <- do
+--    mk <- incrementalisedIdentityMk
+--    dict <- expIncrementalisedDictionary $ Type $ exprType expr
+--    return (DataAlt trueDataCon
+--              ,[]
+--              ,mkApps (Var mk)
+--                      [Type (exprType expr)
+--                      , Type oType
+--                      , dict]
+--              )
+--  let result | isTyVar id = Lam id $ Lam id' $ Lam idD expr'
+--             | otherwise  = Lam id' $ mkLets lets $
+--                                (Case test
+--                                      (testArgVar (nameString $ varName id')
+--                                                  (mkTyConTy boolTyCon)
+--                                                  0)
+--                                      oType
+--                                      [def, hoist])
+--
+--  return result
 
 mutantExp (Let bind expr) = liftM2 Let
                                    (mutantCoreBind bind)
@@ -328,7 +417,6 @@ process targetFile modName = do
                                     , Opt_MagicHash]
       let dflags_dopts = foldl dopt_set dflags_xopts
                                     [Opt_EmitExternalCore
-                                    , Opt_ForceRecomp
                                     , Opt_D_dump_hi]
                                     --, Opt_D_verbose_core2core]
       let dflags' = dflags_dopts -- { verbosity = 4 }

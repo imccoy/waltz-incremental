@@ -48,7 +48,7 @@ compose_incrementalised :: forall a. forall a_inc.
                            (b_inc -> c_inc) -> (a_inc -> b_inc) -> a_inc -> c_inc
 compose_incrementalised = (.)
 
-
+apply_incrementalised = ($)
 
 
 class Num_incrementalised base incrementalised | incrementalised -> base where
@@ -148,8 +148,10 @@ typeclass_ShowBool_incrementalised = undefined
 typeclass_ShowFloat_incrementalised = undefined
 typeclass_ShowDouble_incrementalised = undefined
 
-show_incrementalised :: forall a. forall a_inc. ((forall tc. tc) -> a_inc -> String_incrementalised)
-show_incrementalised _ _ = undefined
+show_incrementalised :: forall a. forall a_inc. 
+                        (Incrementalised a a_inc, Show a_inc) => 
+                        a_inc -> String_incrementalised
+show_incrementalised _ = undefined
 
 instance ApplicableIncrementalised Int Int_incrementalised where
   applyInputChange (Int_incrementalised_add a b) m = (applyInputChange a m) + (applyInputChange b m)
@@ -158,8 +160,8 @@ instance ApplicableIncrementalised Int Int_incrementalised where
   applyInputChange c _ = error $ "no applyInputChange for " ++ (show c)
 
 -- data ZMZN a = ZC a (ZMZN a) | []
-data BuiltinList_incrementalised a a_incrementalised = ZMZN_incrementalised -- empty list constructor
-                                              | BuiltinList_incrementalised
+data BuiltinList_incrementalised a a_incrementalised = BuiltinList_incrementalised -- empty list constructor
+                                              | BuiltinListCons_incrementalised
                                                    a_incrementalised 
                                                    (BuiltinList_incrementalised a a_incrementalised)
                                               | BuiltinList_incrementalised_replace [a] -- replace the whole list with the specified value
@@ -171,7 +173,8 @@ data BuiltinList_incrementalised a a_incrementalised = ZMZN_incrementalised -- e
 
 instance (ApplicableIncrementalised elem elem_incrementalised) => 
             ApplicableIncrementalised ([elem]) (BuiltinList_incrementalised elem elem_incrementalised) where
-  applyInputChange (BuiltinList_incrementalised hchange tchange) (h:t) = (applyInputChange hchange h):(applyInputChange tchange t)
+  applyInputChange (BuiltinListCons_incrementalised hchange tchange) (h:t) = (applyInputChange hchange h):(applyInputChange tchange t)
+  applyInputChange (BuiltinList_incrementalised) [] = []
   applyInputChange (BuiltinList_incrementalised_build_using_1 a) as = a:as
   applyInputChange (BuiltinList_incrementalised_build_using_0 as) a = a ++ as -- dubious, at best
   applyInputChange (BuiltinList_incrementalised_replace n) _ = n
@@ -208,7 +211,7 @@ length_incrementalised (BuiltinList_incrementalised_build_using_1 _)
   = Int_incrementalised_add (Int_incrementalised_replace 1) (Int_incrementalised_identity)
 length_incrementalised (BuiltinList_incrementalised_identity)
   = Int_incrementalised_identity
-length_incrementalised (BuiltinList_incrementalised h_change t_change)
+length_incrementalised (BuiltinListCons_incrementalised h_change t_change)
   = length_incrementalised t_change
 length_incrementalised (BuiltinList_incrementalised_hoist)
   = Int_incrementalised_identity

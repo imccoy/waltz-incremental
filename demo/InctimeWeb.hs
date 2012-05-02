@@ -18,9 +18,10 @@ import Debug.Trace
 import Network.Wai
 import Network.HTTP.Types
 import Network.Wai.Handler.Warp (run)
-import Text.Blaze.Renderer.Utf8 (renderHtml)
 
 import Inctime
+import InctimeHtml
+import InctimeUtils
 
 
 respond404 = return $ responseLBS status404
@@ -28,14 +29,27 @@ respond404 = return $ responseLBS status404
                          (LB8.pack "404 error")
 
 
-wrapDom = id
+wrapDom d = domElem "html"
+               [domElem "head"
+                 [elemA "script" [Attr "src" "rts-common.js"] []
+                 ,elemA "script" [Attr "src" "rts-plain.js"] []
+                 ,elemA "script" [Attr "src" "http://ajax.googleapis.com/ajax/libs/jquery/1.7.2/jquery.min.js"] []
+                 ,elemA "script" [Attr "src" "B.js"] []
+                 ,elemA "script" [Attr "src" "Bweb.js"] []
+                 ,elemA "script" [Attr "src" "InctimeJs.js"] []
+                 ,elemA "script" [Attr "src" "InctimeUtils.js"] []
+                 ,elemA "script" [Attr "src" "InctimeHtml.js"] []
+                 ]
+               ,domElem "body"
+                 [d]
+               ]
 
 
 app parse_request state incrementalised_state_function representationFunction request
   | (length $ pathInfo request) > 0 &&
     ".js" `isSuffixOf` (T.unpack $ last $ pathInfo request) = do
   liftIO $ handle (\(e :: IOException) -> putStrLn (show e) >> respond404) $ do
-    content <- readFile $ (concat $ intersperse "/" $ map T.unpack $ pathInfo request)
+    content <- readFile $ "t/" ++ (concat $ intersperse "/" $ map T.unpack $ pathInfo request)
     return $ responseLBS status200
                          [("Content-Type", B8.pack "script/javascript")]
                          (LB8.pack content)
@@ -52,7 +66,7 @@ app parse_request state incrementalised_state_function representationFunction re
   let response = responseLBS
               status200
               [("Content-Type", B8.pack "text/html")]
-              (renderHtml $ wrapDom $ representationFunction new_state)
+              (LB8.pack $ renderHtml $ wrapDom $ representationFunction new_state)
   liftIO $ writeIORef state new_state
   return response
 
