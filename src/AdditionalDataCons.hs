@@ -68,7 +68,7 @@ lookupDataConByBuilderIndex type_ builderIndex
                           " for " ++ (showSDoc $ ppr $ type_)
 
 dataConAtType con type_ = foldl (\e t -> App e (Type t))
-                                (Var $ dataConWorkId con)
+                                (Var $ dataConWrapId con)
                                 typeArgs
   where typeArgs = case splitTyConApp_maybe type_ of
                      Just (_, args) -> args

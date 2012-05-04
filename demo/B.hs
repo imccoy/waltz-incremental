@@ -34,7 +34,7 @@ page_view state = domElem "div" [
   domElem "p" [
     tElem "I'm the word monster. Words are delicious! So far today, I've eaten ",
     domElem "span" [
-      tElem (show ( appStateWordsLength state))
+      tElemB (IncBox show (appStateWordsLength state))
     ],
     tElem " letters."
   ],

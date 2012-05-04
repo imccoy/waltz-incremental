@@ -1,3 +1,4 @@
+
 $(function() {
   $hs.init();
   $hs.modules.B.init();
@@ -9,10 +10,12 @@ $(function() {
   $hs.loadModule("GHC.Types");
 
   function ensureEval(v) {
-    if (v.notEvaluated)
-      return v.evaluate();
-    else
+    if (v.notEvaluated) {
+      v = v.evaluate();
       return v;
+    } else {
+      return v;
+    }
   }
 
   function hsEmpty() {
@@ -44,10 +47,39 @@ $(function() {
     return result;
   }
 
+  function getDomBox(element) {
+    var js = $(element).attr("data-incbox");
+    console.log("Getting from box", element, js);
+    obj = eval(js);
+    console.log(obj);
+    return obj;
+  }
+
+  function setDomBox(element, val) {
+    var str = JSON.stringify(val);
+    console.log("Putting in box:", str);
+    $(element).attr("data-incbox", str);
+  }
+
+  function applyBoxInputChange(incbox, val) {
+    console.log("applying change in box", incbox);
+    console.log("box data", $.map(incbox.data, function(a) { return ensureEval(a) }));
+    console.log("to", val);
+    var applyDict = ensureEval(incbox.data[0]);
+    var dataDict = incbox.data[1];
+    var f = ensureEval(incbox.data[2]);
+    var incval = ensureEval(incbox.data[3]);
+    console.log("change eval'd", applyDict, f, incval);
+    var newVal = $hs.modules.Inctime.hs_applyInputChange.hscall(applyDict,
+                                                                incval,
+                                                                val);
+    return {innerVal: newVal, outval: f.hscall(newVal)};
+  }
+
   function applyStringChange(s, change) {
-    return $hs.modules.Radtime.hs_applyInputChange.hscall(
-        $hs.modules.Radtime.hs_zdfIncrementalisedZZMZZNzuincrementalisedZMZN.hscall(
-          $hs.modules.Radtime.hs_zdfIncrementalisedCharzuincrementalisedChar),
+    return $hs.modules.Inctime.hs_applyInputChange.hscall(
+        $hs.modules.Inctime.hs_zdfApplicableIncrementalisedZMZNBuiltinListzuincrementalised.hscall(
+          $hs.modules.Inctime.hs_zdfApplicableIncrementalisedCharzuincrementalisedChar),
         change,
         s);
   }
@@ -62,9 +94,9 @@ $(function() {
 
     function applyElemChange(index, change) {
       console.log(context, index, change);
-      console.log($(context).children());
-      console.log($(context).children()[index]);
-      applyUiChange($(context).children()[index], change);
+      console.log(context.childNodes);
+      console.log(context.childNodes[index]);
+      applyUiChange(context.childNodes[index], change);
     }
 
     function applyChildrenChange(index, children_change) {
@@ -105,7 +137,7 @@ $(function() {
       case 1: // ZMZN_incrementalised
         var head_change = attrs_change.data[0];
         var tail_change = attrs_change.data[1];
-        applyAttrChange(index, head_change)
+        applyAttrChange(index, head_change);
         applyAttrsChange(index + 1, tail_change);
         break;
       case 2: // build_using_1 (new head)
@@ -178,10 +210,15 @@ $(function() {
       break;
     case 2: // TextElement_incrementalised
       var text = $(context).text();
-      console.log(text);
       var newText = $hs.fromHaskellString(applyStringChange(hsString(text), ui_change.data[0]));
       $(context).text(newText);
       break;
+    case 3: // TextElementBox_Incrementalised
+      var incbox = ui_change.data[0];
+      var boxval = getDomBox(context);
+      var newBoxVal = applyBoxInputChange(incbox, boxval);
+      setDomBox(context, newBoxVal.innerVal);
+      $(context).text(newBoxVal.outval);
     case 3: // hoist
       // do nothing throw "applyUiChange hoist";
       break;
@@ -198,6 +235,7 @@ $(function() {
     var input_change = $hs.modules.Bweb.hs_parsezurequest.hscall(query());
     var state_change = $hs.modules.B.hs_appzustatezuincrementalised.hscall(input_change);
     var ui_change = $hs.modules.B.hs_pagezuviewzuincrementalised.hscall(state_change);
-    applyUiChange($("body")[0], ui_change);
+    applyUiChange($("#inctime-body")[0].children[0], ui_change);
   });
 });
+

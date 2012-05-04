@@ -15,11 +15,18 @@ InctimeHtml.hi: InctimeHtml.hs $(Incrementaliser)
 Bmain: B.hi Inctime.hs Bmain.hs
 	ghc --make Bmain.hs -fext-core
 
-Bweb: Bweb.js B.hi Inctime.hs InctimeHtml.hi InctimeWeb.hs Bweb.hs BwebMain.hs
+Bweb: Bweb.js BwebMain.hs B.hi \
+    	Inctime.js InctimeHtml.hi InctimeWeb.hs InctimeUtils.js ToJsonString.hs
 	ghc --make -o Bweb BwebMain.hs -fext-core
 
 Bweb.js: Bweb.hs
 	$(ghcjs) Bweb.hs
+
+Inctime.js: Inctime.hs
+	$(ghcjs) Inctime.hs
+
+InctimeUtils.js: InctimeUtils.hs
+	$(ghcjs) InctimeUtils.hs
 
 Bprime-web-db: Bprime.hs ../support/Radtime.hs ../support/DbRadtime.hs Bprime.web.hs Bprime.dbinstances.hs
 	ghc -o Bprime-web Bprime.hs Bprime.dbweb.hs Bprime.dbinstances.hs Bprime.dbinstances-manual.hs ../support/Radtime.hs ../support/DbRadtime.hs
@@ -36,4 +43,5 @@ B.hcr: B.hs
 
 
 clean:
-	rm -f *.hcr *.hi *.o Bmain Bweb B.s B.js
+	rm -f *.hcr *.hi *.o Bmain Bweb B.s B.js \
+	     	InctimeHtml.js InctimeHtml.s InctimeUtils.js InctimeWeb.js

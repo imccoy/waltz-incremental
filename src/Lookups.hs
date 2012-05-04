@@ -7,6 +7,7 @@ import Safe
 
 import Class (Class)
 import CoreMonad
+import DataCon (DataCon)
 import DynFlags
 import HscTypes hiding (lookupDataCon, lookupType)
 import Module
@@ -231,6 +232,18 @@ inputChangeApplier
                                    "applyInputChange"
                                    OccName.varName
 
+incBoxIncCon :: TypeLookupM DataCon
+incBoxIncCon
+  = lookupAndConvertInctimeTyThing tyThingDataCon
+                                   "incBoxIncCon"
+                                   "IncBox_incrementalised"
+                                   OccName.dataName
+incBoxTyCon :: TypeLookupM TyCon
+incBoxTyCon
+  = lookupAndConvertInctimeTyThing tyThingTyCon
+                                   "incBoxTyCon"
+                                   "IncBox"
+                                   OccName.tcName
 
 
 lookupPreludeFn :: String -> String -> TypeLookupM Var

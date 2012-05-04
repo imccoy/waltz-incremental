@@ -8,8 +8,10 @@ import Data.Maybe (fromJust, maybeToList)
 import Debug.Trace
 import GHC.Prim
 
-data Obj = forall a. Obj a
- 
+import Data.Data
+import Unsafe.Coerce (unsafeCoerce)
+
+
 class Incrementalised base incrementalised | incrementalised -> base where
   isIncrementalisedReplace :: incrementalised -> Bool
   isIncrementalisedHoist :: incrementalised -> Bool
@@ -21,6 +23,22 @@ class Incrementalised base incrementalised | incrementalised -> base where
 
 class ApplicableIncrementalised base incrementalised where 
   applyInputChange  :: incrementalised -> base -> base
+
+
+data IncBox b = forall a. (Data a) => IncBox (a -> b) a
+
+data IncBox_incrementalised b b_incrementalised
+ = forall a a_incrementalised. 
+     (ApplicableIncrementalised a a_incrementalised, Data a) =>
+     IncBox_incrementalised (a -> b) a_incrementalised
+
+instance ApplicableIncrementalised (IncBox b)
+                                   (IncBox_incrementalised b b_incrementalised) where 
+  applyInputChange (IncBox_incrementalised f v') (IncBox _ v)
+    = IncBox f $ applyInputChange v' (unsafeCoerce v)
+
+
+
 
 
 class Monad_incrementalised base incrementalised where
@@ -160,15 +178,16 @@ instance ApplicableIncrementalised Int Int_incrementalised where
   applyInputChange c _ = error $ "no applyInputChange for " ++ (show c)
 
 -- data ZMZN a = ZC a (ZMZN a) | []
-data BuiltinList_incrementalised a a_incrementalised = BuiltinList_incrementalised -- empty list constructor
-                                              | BuiltinListCons_incrementalised
+data BuiltinList_incrementalised a a_incrementalised = 
+                                                BuiltinListCons_incrementalised
                                                    a_incrementalised 
                                                    (BuiltinList_incrementalised a a_incrementalised)
-                                              | BuiltinList_incrementalised_replace [a] -- replace the whole list with the specified value
-                                              | BuiltinList_incrementalised_hoist
-                                              | BuiltinList_incrementalised_identity -- that's ZMZN the type of lists, not ZMZN the empty list
                                               | BuiltinList_incrementalised_build_using_1 a
                                               | BuiltinList_incrementalised_build_using_0 [a]
+                                              | BuiltinList_incrementalised_identity -- that's ZMZN the type of lists, not ZMZN the empty list
+                                              | BuiltinList_incrementalised_replace [a] -- replace the whole list with the specified value
+                                              | BuiltinList_incrementalised_hoist
+                                              | BuiltinList_incrementalised -- empty list constructor
   deriving (Show)
 
 instance (ApplicableIncrementalised elem elem_incrementalised) => 

@@ -1,8 +1,11 @@
 module InctimeUtils where
 
+import Inctime
 import Data.Maybe (fromJust)
 import Data.List (intersperse)
 import InctimeHtml
+
+import ToJsonString
 
 lastInQueryString :: [(String, Maybe String)] -> String -> String
 lastInQueryString query name = case filter (\(n, v) -> n == name) query of
@@ -10,8 +13,14 @@ lastInQueryString query name = case filter (\(n, v) -> n == name) query of
                                  lookup_matches -> (fromJust . snd . last) lookup_matches
 
 renderHtml :: Dom -> String
-renderHtml (Element n attrs children) = concat ["<", n, " ", renderAttrs attrs, ">",
+renderHtml (Element n attrs children) = concat ["<", n, " ", renderAttrs attrs, 
+                                                ">",
                                                 concatMap renderHtml children,
                                                 "</", n, ">"]
 renderHtml (TextElement s) = s
+renderHtml (TextElementBox (IncBox f v)) = concat ["<span data-incbox=\"",
+                                                   toJsonString v,
+                                                   "\">",
+                                                   f v,
+                                                   "</span>"]
 renderAttrs = concat . (intersperse " ") . (map $ \(Attr a v) -> concat [a, "=\"", v, "\""])

@@ -41,7 +41,8 @@ wrapDom d = domElem "html"
                  ,elemA "script" [Attr "src" "InctimeHtml.js"] []
                  ]
                ,domElem "body"
-                 [d]
+                 [elemA "div" [Attr "id" "log"] []
+                 ,elemA "div" [Attr "id" "inctime-body"] [d]]
                ]
 
 

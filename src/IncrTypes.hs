@@ -365,15 +365,25 @@ incrementalisedDictionary dictTy _ t@(getTyVar_maybe -> (Just tyVar)) = do
 incrementalisedDictionary dictTy dictVal t = do
   let base_t = snd $ splitFunTys $ snd $ splitForAllTys t
   inst <- dictVal base_t
-  let args = case splitTyConApp_maybe t of
-               Just (_, a) -> a
-               Nothing     -> []
-  argsMutants <- mapM mutantType args
-  argsInsts <- mapM (incrementalisedDictionary dictTy dictVal) args
-  return $ mkApps (Var $ inst) $ interlace3 (map Type args)
-                                            (map Type argsMutants)
-                                            argsInsts
+  
+  includeArgs <- do
+    incBox <- incBoxTyCon
+    return $ tyConAppTyCon base_t /= incBox
+  
+  allArgs <- do
+    let args = case splitTyConApp_maybe t of
+                 Just (_, a) -> a
+                 Nothing     -> []
+    argsMutants <- mapM mutantType args
+    argsInsts <- mapM (incrementalisedDictionary dictTy dictVal) args
+    if includeArgs
+      then return $ interlace3 (map Type args)
+                               (map Type argsMutants)
+                               argsInsts
+      else return $ interlace  (map Type args)
+                               (map Type argsMutants)
 
+  return $ mkApps (Var $ inst) $ allArgs
 dictionaryInstance :: Type -> (NameSpace -> Type -> (Name, OccName)) -> TypeLookupM Var
 dictionaryInstance type_ nameFinder
   | let tyCon = fmap fst $ splitTyConApp_maybe type_

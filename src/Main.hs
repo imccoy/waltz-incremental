@@ -14,17 +14,22 @@ import GHC.Paths ( libdir )
 import CoreLint
 import CoreMonad
 import CoreSyn
+import CorePrep (corePrepExpr)
 import DataCon
+import Demand
 import DynFlags
 import ErrUtils
 import HscTypes hiding (lookupDataCon, lookupType)
 import HscMain
-import IdInfo (IdDetails (DataConWrapId, DataConWorkId))
+import Id
+import IdInfo (IdDetails (DataConWrapId, DataConWorkId), mayHaveCafRefs)
 import IfaceSyn (IfaceInst (..))
 import IfaceType (toIfaceTyCon_name)
 import InstEnv (extendInstEnvList,
                 is_cls, is_dfun, is_tys, is_tcs, is_tvs, is_flag)
 import Module
+import Name (nameOccName)
+import OccName (occNameSpace, pprNameSpace)
 import Outputable
 import Type
 import TysWiredIn
@@ -123,6 +128,24 @@ mutantExp (App expr arg)
      && isTypeArg arg = do expr' <- mutantExp expr
                            arg' <- mutantExp arg
                            return $ App (App expr' arg) arg'
+  | isIncBoxApp (App expr arg) = do
+                         let (boxResType, boxValType, dataDict, boxFun, boxVal)
+                                 = splitBoxApp (App expr arg)
+                         boxResType' <- mutantType boxResType
+                         boxValType' <- mutantType boxValType
+                         boxVal' <- mutantExp boxVal
+                         incBox' <- incBoxIncCon
+                         applyDict <- incrementalisedDictionary
+                                        applicableDictionaryType
+                                        applicableDictionaryInstance
+                                        boxValType
+                         return $ mkApps (Var $ dataConWrapId incBox')
+                                         [Type boxResType, Type boxResType'
+                                         ,Type boxValType, Type boxValType'
+                                         ,applyDict
+                                         ,dataDict
+                                         ,boxFun
+                                         ,boxVal']
   | isPrimCon expr = do let ty = exprType (App expr arg)
                         ty' <- mutantType ty
                         let replace = lookupDataConByAdd ty' AddConReplacement
@@ -142,6 +165,19 @@ mutantExp (App expr arg)
         isPrimCon (Var id) = "#" `List.isSuffixOf` (nameString $ 
                                                       varName id)
         isPrimCon _ = False
+        isIncBoxApp exp = isJust $ splitBoxApp_maybe exp
+        splitBoxApp = fromJust . splitBoxApp_maybe
+        splitBoxApp_maybe (App (App (App (App (App (isIncBox -> True)
+                                              (Type boxResType))
+                                              (Type boxValType))
+                                         dataDict@(isTypeArg -> False))
+                                    boxFun@(isTypeArg -> False))
+                                boxVal@(isTypeArg -> False))
+          = Just (boxResType, boxValType, dataDict, boxFun, boxVal)
+        splitBoxApp_maybe _ = Nothing
+        isIncBox (Var id) = (nameString $ varName id) == "IncBox"
+        isIncBox _ = False
+                                
 -- for \ a -> b, need to check if a is a (incrementalize_type a)_hoist. 
 -- If so, produce a (incrementalize_type b)_identity.
 mutantExp expr@(Lam _ _) = do 
@@ -440,6 +476,28 @@ process targetFile modName = do
         showAllModuleContents $ mg_types $ dm_core_module $ d'
         putStrLn $ showSDocDebug $ ppr $ mg_binds $ dm_core_module d'
         putStrLn $ ms_hspp_file modSum
+        let tElemBinds = filter (\b -> any ("tElem" `List.isPrefixOf`)
+                                           (map (nameString . varName)
+                                                (bindersOf b)))
+                                (mg_binds $ dm_core_module d')
+        putStrLn "PAAAARTAY"
+        forM ((map (\(Var v) -> v) $ concatMap rhssOfBind tElemBinds)) $ \v -> do
+          putStrLn "!!"
+          putStrLn $ showSDocDebug $ ppr v
+          putStrLn $ showSDocDebug $ ppr (varName v)
+          putStrLn $ "space " ++ (showSDocDebug $ pprNameSpace (occNameSpace $ nameOccName $ varName v))
+          putStrLn $ "details " ++ (showSDocDebug $ ppr (idDetails v))
+          putStrLn $ "isUnliftedType " ++ (show $ isUnLiftedType $ varType v)
+          putStrLn $ "isDemandInfo " ++ (show $ isStrictDmd $ idDemandInfo v)
+          putStrLn $ "hasNoBinding " ++ (show $ hasNoBinding v)
+          putStrLn $ "weirdy " ++ (case isPrimOpId_maybe v of Just x -> show x
+                                                              _ -> "b")
+          putStrLn $ "mayHaveCafRefs " ++ (show $ mayHaveCafRefs $ idCafInfo v)
+          case idDetails v of
+            (DataConWorkId c) -> putStrLn "worker"
+            (DataConWrapId c) -> putStrLn "wrapper"
+            details           -> putStrLn $ showSDoc $ ppr details
+          corePrepExpr dflags' (Var v) >>= putStrLn . showSDoc . ppr
 
       liftIO $ do
         lintPrintAndFail d'
@@ -478,6 +536,8 @@ main = do
 concreteJavascriptFromCgGuts :: DynFlags -> CgGuts -> IO String
 concreteJavascriptFromCgGuts dflags core =
   do core_binds <- corePrepPgm dflags (cg_binds core) (cg_tycons $ core)
+     putStrLn $ (showSDoc $ ppr $ cg_binds core)
+     putStrLn $ (showSDoc $ ppr core_binds)
      stg <- coreToStg (modulePackageId . cg_module $ core) core_binds
      (stg', _ccs) <- stg2stg dflags (cg_module core) stg
      let abstract :: Javascript js => js
