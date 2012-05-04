@@ -42,18 +42,19 @@ mutantId var = mk var' =<< (mutantType $ varType var)
              | otherwise                                    
              = (mutantName $ varName var)
         mk :: Name -> Type -> TypeLookupM Var
-        mk n t | isTcTyVar var  = return $ mkTcTyVar n t (tcTyVarDetails var)
-               | isTyVar var    = return $ mkTyVar n t
-               | isGlobalId var = buildExpId mkGlobalVar
-               | isLocalVar var = buildExpId local_mk
+        mk n t | isTcTyVar var          = return $ mkTcTyVar n t 
+                                                             (tcTyVarDetails var)
+               | isTyVar var            = return $ mkTyVar n t
+               | isGlobalId var         = buildExpId mkGlobalVar
+               | isExportedLocalVar var = buildExpId mkExportedLocalVar
+               | isLocalVar var         = buildExpId mkLocalVar
                where buildExpId mk' = liftM4 mk'
                                              (details var)
                                              (return n)
                                              (return t)
-                                             (return vanillaIdInfo)
-        local_mk | isExportedId var  = mkExportedLocalVar
-                 | otherwise         = mkLocalVar
+                                             (return $ idInfo var)
         details var = mutantIdDetails (idDetails var)
+        isExportedLocalVar v = isExportedId v && isLocalVar v
 
 mutantIdDetails VanillaId = return VanillaId
 mutantIdDetails (RecSelId tyCon naughty) = liftM2 RecSelId
@@ -294,11 +295,11 @@ builderMutantDataConName tyConName n
                         (builderConSuffix n)
 builderMutantDataConWorkId dataCon n
   = mutantNameUnique (dataConName dataCon)
-                     OccName.varName 
+                     OccName.dataName 
                      ("data_con_work_" ++ builderConSuffix n)
 builderMutantDataConWrapId dataCon n
   = mutantNameUnique (dataConName dataCon)
-                     OccName.varName 
+                     OccName.dataName 
                      ("data_con_wrap_" ++ builderConSuffix n)
 
 
