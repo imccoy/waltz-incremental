@@ -17,7 +17,7 @@ renderHtml (Element n attrs children) = concat ["<", n, " ", renderAttrs attrs,
                                                 ">",
                                                 concatMap renderHtml children,
                                                 "</", n, ">"]
-renderHtml (TextElement s) = s
+renderHtml (TextElement s) = "<span>" ++ s ++ "</span>"
 renderHtml (TextElementBox (IncBox f v)) = concat ["<span data-incbox=\"",
                                                    toJsonString v,
                                                    "\">",

@@ -194,8 +194,6 @@ incrementalisedTest n
                                    OccName.varName
 incrementalisedReplaceTest :: TypeLookupM Var
 incrementalisedReplaceTest = incrementalisedTest "Replace"
-incrementalisedHoistTest :: TypeLookupM Var
-incrementalisedHoistTest = incrementalisedTest "Hoist"
 incrementalisedIdentityTest :: TypeLookupM Var
 incrementalisedIdentityTest = incrementalisedTest "Identity"
 incrementalisedIdentityMk :: TypeLookupM Var
@@ -210,13 +208,6 @@ incrementalisedReplaceMk
                                    "incrementalisedReplaceMk"
                                    "mkIncrementalisedReplace"
                                    OccName.varName
-incrementalisedHoistMk :: TypeLookupM Var
-incrementalisedHoistMk
-  = lookupAndConvertInctimeTyThing tyThingId
-                                   "incrementalisedHoistMk"
-                                   "mkIncrementalisedHoist"
-                                   OccName.varName
-
 
 
 incrementalisedReplaceExtractor :: TypeLookupM Var

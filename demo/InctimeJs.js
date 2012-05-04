@@ -8,13 +8,85 @@ $(function() {
   $hs.loadModule("GHC.Tuple");
   $hs.loadModule("GHC.List");
   $hs.loadModule("GHC.Types");
+  $hs.loadModule("Data.Maybe");
 
   function ensureEval(v) {
     if (v.notEvaluated) {
-      v = v.evaluate();
-      return v;
+      return v.evaluate();
     } else {
       return v;
+    }
+  }
+
+  function fullEval(v) {
+    v = ensureEval(v);
+    for (var i = 0; v.data != undefined && i < v.data.length; i++) {
+      v.data[i] = fullEval(v.data[i]);
+    }
+    return v;
+  }
+  
+  function jsOutputChange(c) {
+    function list_change(member_change, c) {
+      c = ensureEval(c);
+      if (c.tag == 1) {
+        return { type: "Cons change",
+                 head: member_change(c.data[0]),
+                 tail: list_change(member_change, c.data[1]) };
+      } else if (c.tag == 2) {
+        return { type: "New head change",
+                 new_head: c.data[0] };
+      } else if (c.tag == 3) {
+        return { type: "New tail change",
+                 new_tail: c.data[0] };
+      } else if (c.tag == 4) {
+        return { type: "Identity" };
+      } else if (c.tag == 5) {
+        return { type: "Replace",
+                 value: c.data[0] };
+      } else if (c.tag == 6) {
+        return { type: "Empty list change" };
+      }
+    }
+    function char_change(c) {
+      c = ensureEval(c);
+      if (c.tag == 0) {
+        return { type: "primitive char", value: c.data[0] };
+      } else if (c.tag == 1) {
+        return { type: "replace", value: fullEval(c.data[1]) };
+      } else if (c.tag == 2) {
+        return { type: "identity" };
+      }
+    }
+    function attr_change(c) {
+      return {};
+    }
+    function string_change(c) {
+      return list_change(char_change, c);
+    }
+    function attrs_change(c) {
+      return list_change(attr_change, c);
+    }
+    function elts_change(c) {
+      return list_change(jsOutputChange, c);
+    }
+    c = ensureEval(c);
+    if (c.tag == 1) {
+      return { type: "Element change",
+               tag_name: string_change(c.data[0]),
+               attrs: attrs_change(c.data[1]),
+               children: elts_change(c.data[2]) };
+    } else if (c.tag == 2) {
+      return { type: "Text change",
+               change: string_change(c.data[0]) };
+    } else if (c.tag == 3) {
+      return { type: "IncBox to text change",
+               change: fullEval(c.data[0]) };
+    } else if (c.tag == 4) {
+      return { type: "replace",
+               value: fullEval(c.data[0]) };
+    } else if (c.tag == 5) {
+      return { type: "identity" };
     }
   }
 
@@ -41,7 +113,8 @@ $(function() {
         return;
       var name = hsString(this.name);
       var value = hsString(this.value);
-      var v = $hs.modules.GHCziTuple.hs_Z2T.hscall(name, value);
+      var justValue = $hs.modules.DataziMaybe.hs_Just.hscall(value);
+      var v = $hs.modules.GHCziTuple.hs_Z2T.hscall(name, justValue);
       result = hsCons(v, result);
     });
     return result;
@@ -49,37 +122,36 @@ $(function() {
 
   function getDomBox(element) {
     var js = $(element).attr("data-incbox");
-    console.log("Getting from box", element, js);
-    obj = eval(js);
-    console.log(obj);
+    obj = eval("(" + js + ")");
     return obj;
   }
 
   function setDomBox(element, val) {
     var str = JSON.stringify(val);
-    console.log("Putting in box:", str);
     $(element).attr("data-incbox", str);
   }
 
   function applyBoxInputChange(incbox, val) {
-    console.log("applying change in box", incbox);
-    console.log("box data", $.map(incbox.data, function(a) { return ensureEval(a) }));
-    console.log("to", val);
     var applyDict = ensureEval(incbox.data[0]);
     var dataDict = incbox.data[1];
     var f = ensureEval(incbox.data[2]);
     var incval = ensureEval(incbox.data[3]);
-    console.log("change eval'd", applyDict, f, incval);
-    var newVal = $hs.modules.Inctime.hs_applyInputChange.hscall(applyDict,
+    var newBox = $hs.modules.Inctime.hs_applyInputChange.hscall(applyDict,
                                                                 incval,
                                                                 val);
-    return {innerVal: newVal, outval: f.hscall(newVal)};
+    console.log("Box", "old", val, "new", ensureEval(newBox));
+    console.log(ensureEval(incval),
+                ensureEval(incval.data[0]),
+                ensureEval(ensureEval(incval.data[0]).data[0]),
+                ensureEval(incval.data[1]));
+    var newVal = ensureEval(newBox);
+    return {innerVal: newVal, outval: $hs.fromHaskellString(f.hscall(newVal))};
   }
 
   function applyStringChange(s, change) {
     return $hs.modules.Inctime.hs_applyInputChange.hscall(
         $hs.modules.Inctime.hs_zdfApplicableIncrementalisedZMZNBuiltinListzuincrementalised.hscall(
-          $hs.modules.Inctime.hs_zdfApplicableIncrementalisedCharzuincrementalisedChar),
+          $hs.modules.Inctime.hs_zdfApplicableIncrementalisedCharCharzuincrementalised),
         change,
         s);
   }
@@ -93,9 +165,8 @@ $(function() {
     }
 
     function applyElemChange(index, change) {
-      console.log(context, index, change);
-      console.log(context.childNodes);
-      console.log(context.childNodes[index]);
+      console.log("elem change", context, index, change,
+          context.childNodes, context.childNodes[index], ensureEval(change));
       applyUiChange(context.childNodes[index], change);
     }
 
@@ -121,10 +192,7 @@ $(function() {
       case 5: // replace
         throw "applyUiChange Children replace";
         break;
-      case 6: // hoist
-        throw "applyUiChange Children hoist";
-        break;
-      case 7: // empty
+      case 6: // empty
         // do nothing
         break;
       }
@@ -164,10 +232,7 @@ $(function() {
           newAttributes = newAttributes.data[1];
         }
         break;
-      case 6: // hoist
-        throw "applyUiChange Attrs hoist";
-        break;
-      case 7: // empty
+      case 6: // empty
         // do nothing
         break;
       }
@@ -185,12 +250,8 @@ $(function() {
           throw "applyUiChange Attr main got name change";
         var newValue = $hs.fromHaskellString(applyStringChange(hsString(value), value_change));
         context.attributes[index].value = newValue;
-        throw "applyUiChange Attr main";
         break;
-      case 2: // hoist
-        throw "applyUiChange Attr hoist";
-        break;
-      case 3: // replace
+      case 2: // replace
         var newAttr = jsAttr(attr_change.data[0]);
         if (newAttr.name != context.attributes[index].name)
           throw "applyUiChange Attr replace got name change";
@@ -210,7 +271,9 @@ $(function() {
       break;
     case 2: // TextElement_incrementalised
       var text = $(context).text();
-      var newText = $hs.fromHaskellString(applyStringChange(hsString(text), ui_change.data[0]));
+      var newText = $hs.fromHaskellString(applyStringChange(hsString(text),
+                                          ui_change.data[0]));
+      console.log(context, "new text ", newText);
       $(context).text(newText);
       break;
     case 3: // TextElementBox_Incrementalised
@@ -219,8 +282,6 @@ $(function() {
       var newBoxVal = applyBoxInputChange(incbox, boxval);
       setDomBox(context, newBoxVal.innerVal);
       $(context).text(newBoxVal.outval);
-    case 3: // hoist
-      // do nothing throw "applyUiChange hoist";
       break;
     case 4: // replace
       var newDom = ui_change.data[0];
@@ -233,8 +294,11 @@ $(function() {
   $("input[type=submit]").click(function(e) {
     e.preventDefault();
     var input_change = $hs.modules.Bweb.hs_parsezurequest.hscall(query());
+    console.log("input change", fullEval(input_change));
     var state_change = $hs.modules.B.hs_appzustatezuincrementalised.hscall(input_change);
+    console.log("state change", fullEval(state_change));
     var ui_change = $hs.modules.B.hs_pagezuviewzuincrementalised.hscall(state_change);
+    console.log("output change", jsOutputChange(ui_change));
     applyUiChange($("#inctime-body")[0].children[0], ui_change);
   });
 });

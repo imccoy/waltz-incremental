@@ -40,9 +40,7 @@ page_view state = domElem "div" [
   ],
   domElem "p" [
     tElem "May I please have some more? I just had a marvellous '",
-    domElem "span" [
-      tElem (appStateMostRecentWord state)
-    ],
+    tElem (appStateMostRecentWord state),
     tElem "'"
   ],
   elemA "form" [Attr "method" "post"] [

@@ -178,8 +178,9 @@ mutantExp (App expr arg)
         isIncBox (Var id) = (nameString $ varName id) == "IncBox"
         isIncBox _ = False
                                 
--- for \ a -> b, need to check if a is a (incrementalize_type a)_hoist. 
--- If so, produce a (incrementalize_type b)_identity.
+-- for \ a -> b, need to check if all args are identity
+-- If so, produce an identity of the result type.
+-- We do a bit of an eta-expand-ish thing here (with additionalVarTys)
 mutantExp expr@(Lam _ _) = do 
   let (tyVars, valVars, exprRemaining) = collectTyAndValBinders expr
   let suffix = concatMap (nameString . varName) valVars ++ "Ident"
@@ -214,7 +215,7 @@ mutantExp expr@(Lam _ _) = do
 
   scrutinee <- do
     tests <- forM (zip allValVars allValVars') $ \(valVar, valVar') -> do
-      ts <- incrementalisedHoistTest
+      ts <- incrementalisedIdentityTest
       dict <- varIncrementalisedDictionary incrementalisedDictionaryType
                                            valVar
                                            (typeFor valVar)
@@ -251,47 +252,6 @@ mutantExp expr@(Lam _ _) = do
                      , mkApps exprRemaining' (map Var additionalVars'))
                     ,(DataAlt trueDataCon, [], mkIdentity)]
 
-
---  expr' <- mutantExp expr
---  id' <- lookupOrMutantId id
---  idD <- varIncrementalisedDictionary incrementalisedDictionaryType
---                                      id
---                                      (typeFor id)
---                                      (typeFor id')
---  let iType = varType id'
---  let oType = exprType expr'
---
---  test <- liftM2 mkApps (liftM Var incrementalisedHoistTest)
---                        (return $ [Type (varType id)
---                                  , Type iType
---                                  , Var idD
---                                  , Var id'])
---  idDvalue <- expIncrementalisedDictionary $ Type $ varType id
---  let lets = [NonRec idD idDvalue]
---                
---
---  let def = (DEFAULT, [], expr')
---
---  hoist <- do
---    mk <- incrementalisedIdentityMk
---    dict <- expIncrementalisedDictionary $ Type $ exprType expr
---    return (DataAlt trueDataCon
---              ,[]
---              ,mkApps (Var mk)
---                      [Type (exprType expr)
---                      , Type oType
---                      , dict]
---              )
---  let result | isTyVar id = Lam id $ Lam id' $ Lam idD expr'
---             | otherwise  = Lam id' $ mkLets lets $
---                                (Case test
---                                      (testArgVar (nameString $ varName id')
---                                                  (mkTyConTy boolTyCon)
---                                                  0)
---                                      oType
---                                      [def, hoist])
---
---  return result
 
 mutantExp (Let bind expr) = liftM2 Let
                                    (mutantCoreBind bind)
@@ -381,9 +341,10 @@ builderAlts' c@(Case expr id type_ alts)
 -- something that will return an incrementalised value, where the "length xs"
 -- term has gone away.  To achieve this, we incrementalise the RHS as usual,
 -- but we make some assignments beforehand. We define xs_incrementalised as a
--- hoist value, and elsewhere arrange for length_incrementalised to respond to
--- a hoist value by making the term go away. More work is required to make the
--- right thing happen when more than one hoist value is involved.
+-- identity value, and elsewhere arrange for length_incrementalised to respond to
+-- a identity value by making the term go away (ie, by producing another identity).
+-- More work may required to make the right thing happen when more than one 
+-- identity value is involved.
 --
 -- When we incrementalise the RHS, it will expect incrementalised values to
 -- exist for all the other terms in the expression (x, in this case, although
@@ -406,7 +367,7 @@ builderAltAtIndex' (Case c_expr c_id c_type c_alts)
   let builderCon = lookupDataConByBuilderIndex type_'
                                                builderConIndex
   replaceVarId <- mutantId replaceVar
-  replaceVarValue <- hoistValue replaceVar
+  replaceVarValue <- identityValue replaceVar
   builderArgsIds <- mapM mutantId builderArgs
   builderArgsValues <- mapM replaceValue builderArgs
   expr' <- mutantExp expr
@@ -420,8 +381,8 @@ builderAltAtIndex' (Case c_expr c_id c_type c_alts)
   where type_ = dataConOrigResTy dataCon
         builderArgs = listWithout builderConIndex vars
         replaceVar = vars !! builderConIndex
-        hoistValue var = incrementalisedDictElement 
-                           incrementalisedHoistMk
+        identityValue var = incrementalisedDictElement 
+                           incrementalisedIdentityMk
                            (typeFor var)
         replaceValue var = liftM2 App
                                   (incrementalisedDictElement

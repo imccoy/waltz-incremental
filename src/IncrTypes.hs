@@ -520,8 +520,7 @@ incrementalisedClassBind tyCon mutantTyCon = do
                       , testArgVars baseName argTypes
                       , Var trueDataConId)]
   let isReplace = mkTest 0 AddConReplacement [baseType] 
-  let isHoist = mkTest 1 AddConHoist []
-  let isIdentity = mkTest 2 AddConIdentity []
+  let isIdentity = mkTest 1 AddConIdentity []
 
   dataCons_builderCons <- do
     let dataCons_indexes :: [(DataCon, Int)]
@@ -553,7 +552,6 @@ incrementalisedClassBind tyCon mutantTyCon = do
 
   let mkReplace = mkBuilder AddConReplacement [baseType]
   let mkIdentity = mkBuilder AddConIdentity []
-  let mkHoist = mkBuilder AddConHoist []
 
   callUndefined <- liftM Var $ lookupPreludeFn "" "undefined"
 
@@ -576,11 +574,9 @@ incrementalisedClassBind tyCon mutantTyCon = do
                     mutantTyCon
                     []
                     [ isReplace
-                    , isHoist
                     , isIdentity
                     , mkReplace
                     , mkIdentity
-                    , mkHoist
                     , extractReplace]
   where baseName = "Incrementalised" ++ (nameString $ getName $ tyCon)
         testVar = testArgVar baseName incrementalisedType

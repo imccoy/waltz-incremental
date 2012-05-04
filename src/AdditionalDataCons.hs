@@ -11,12 +11,10 @@ import TyCon
 import Type
 
 data AdditionalConType = AddConReplacement
-                       | AddConHoist
                        | AddConIdentity
   deriving Show
-additionalConTypes = [AddConReplacement, AddConHoist, AddConIdentity]
+additionalConTypes = [AddConReplacement, AddConIdentity]
 additionalConSuffix AddConReplacement = "replace"
-additionalConSuffix AddConHoist       = "hoist"
 additionalConSuffix AddConIdentity    = "identity"
 
 
