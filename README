@@ -8,33 +8,26 @@ gets recomputed from scratch every time the event stream changes. Ideally, we
 would incrementally update applicationState when something is added to the
 event stream. The machinery to do this is under development in src/
 
+You may want some dependencies:
+  cabal install wai
+
+Also, you need ghcjs (https://github.com/sviperll/ghcjs) checked out in a
+sibling directory to this one. You need to build it (by the instructions in
+their README), and you need to build js versions of the haskell libraries. To
+do that, cd into ghcjs/examples. Edit BuildTest.hs and change:
+
+  , ("base", ["Prelude"])
+
+ to
+
+   , ("base", ["Prelude", "Data.Data"])
+
+Then runghc BuildTest.hs.
+
 To see it go, type "cabal build", then "cd demo" and "make". 
 
-You may want some dependencies:
-  cabal install extcore haskell-src # for the machinery
-  cabal install wai blaze-html      # for the web stuff
-
-Here's how everything fits together:
-
- B.hs
-   
-   |    ghc compiles the haskell to haskell core
-  \ /
-
- B.hcr
-
-   |   ./Incrementalizer reads the core, and adds incrementalised versions of it's
-  \ /  functions
-
-Bprime.hcr
-
-   |    ./hcr2hs produces haskell code from rad's core
-  \ /   
-
-Bprime.hs
-
-   |    ghc compiles to a working program, bringing in Bprime.main.hs to
-  \ /   make a runnable entity
-
-Bprime
-
+Bweb not working? Check that all the symlinks in waltz/demo/t point to things.
+Sometimes, compiling the runtime pieces to javascript results in a non-
+incrementalised javascript version of InctimeHtml. To fix it:
+  cd demo
+  ../dist/build/Incrementaliser/Incrementaliser InctimeHtml

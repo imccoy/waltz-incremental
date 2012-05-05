@@ -4,7 +4,7 @@ ghcjs=../../ghcjs/dist/build/ghcjs/ghcjs
 
 default: Bmain Bweb
 	./Bmain
-	echo "try Bweb or Bprime-web-db for moar fun"
+	echo "try Bweb for moar fun"
 
 B.hi: B.hs $(Incrementaliser) InctimeHtml.hi
 	$(Incrementaliser) B && as B.s -o B.o
