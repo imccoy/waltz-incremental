@@ -44,4 +44,5 @@ B.hcr: B.hs
 
 clean:
 	rm -f *.hcr *.hi *.o Bmain Bweb B.s B.js \
-	     	InctimeHtml.js InctimeHtml.s InctimeUtils.js InctimeWeb.js
+	     	InctimeHtml.js InctimeHtml.s InctimeUtils.js InctimeWeb.js \
+				Bweb.js Inctime.js ToJsonString.js
