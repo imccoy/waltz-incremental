@@ -30,6 +30,11 @@ data IncBox_incrementalised b b_incrementalised
      (ApplicableIncrementalised a a_incrementalised, Data a) =>
      IncBox_incrementalised (a -> b) a_incrementalised
 
+noIncLam :: forall a. forall b. (a -> b) -> (a -> b)
+noIncLam = id
+noIncApp :: forall a. forall b. (a -> b) -> (a -> b)
+noIncApp = id
+
 instance ApplicableIncrementalised (IncBox b)
                                    (IncBox_incrementalised b b_incrementalised) where 
   applyInputChange (IncBox_incrementalised f v') (IncBox _ v)
@@ -50,6 +55,14 @@ class Monoid_incrementalised base incrementalised where
   mappend_incrementalised :: incrementalised -> incrementalised -> incrementalised
   mconcat_incrementalised :: [incrementalised] -> incrementalised
 
+class (Eq base, Incrementalised base incrementalised) =>
+      Eq_incrementalised base incrementalised | incrementalised -> base where
+  eq_incrementalised :: incrementalised -> incrementalised -> Bool_incrementalised
+  eq_incrementalised a b | isIncrementalisedReplace a && isIncrementalisedReplace b
+                         = mkIncrementalisedReplace $ extractReplaceValue a == extractReplaceValue b
+                         | isIncrementalisedIdentity a && isIncrementalisedIdentity b
+                         = Bool_incrementalised_identity
+
 typeclass_MonoidZLZR_incrementalised = undefined
 
 typeclass_MonadZMZN_incrementalised = undefined
@@ -58,12 +71,16 @@ unit_incrementalised = ()
 
 id_incrementalised = id
 
-compose_incrementalised :: forall a. forall a_inc. 
-                           forall b. forall b_inc.
-                           forall c. forall c_inc.
+-- why are the foralls in this order? Because it seems to work.
+compose_incrementalised :: forall b. forall b_inc. (Incrementalised b b_inc) =>
+                           forall c. forall c_inc. (Incrementalised c c_inc) =>
+                           forall a. forall a_inc. (Incrementalised a a_inc) =>
                            (b_inc -> c_inc) -> (a_inc -> b_inc) -> a_inc -> c_inc
 compose_incrementalised = (.)
 
+apply_incrementalised :: forall a. forall a_inc. (Incrementalised a a_inc) =>
+                         forall b. forall b_inc. (Incrementalised b b_inc) =>
+                         (a_inc -> b_inc) -> a_inc -> b_inc
 apply_incrementalised = ($)
 
 
@@ -91,8 +108,8 @@ instance Incrementalised Char Char_incrementalised where
   mkIncrementalisedIdentity = Char_incrementalised_identity
   mkIncrementalisedReplace = Char_incrementalised_replace
 
-data Bool_incrementalised = Bool_incrementalised_False
-                          | Bool_incrementalised_True
+data Bool_incrementalised = False_incrementalised
+                          | True_incrementalised
                           | Bool_incrementalised_replace Bool
                           | Bool_incrementalised_identity
   deriving (Show)

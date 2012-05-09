@@ -86,12 +86,14 @@ mutantType (getTyVar_maybe -> Just tyVar)
   = liftM mkTyVarTy $ mutantTyVar tyVar
 mutantType (splitAppTy_maybe -> Just (a, b))
   | isApp a   = liftM2 mkAppTy (mutantType a) (mutantType b)
+  | isPrim a   = liftM2 mkAppTy (mutantType a) (mutantType b)
   | otherwise = liftM2 mkAppTy (mutantType a >>= return . (`mkAppTy` b))
                                (mutantType b)
   -- | otherwise = liftM2 mkAppTy (do t <- mutantType a
   --                                  return $ mkAppTy t b)
   where isApp (splitTyConApp_maybe -> Just (con, _)) = isFunTyCon con
         isApp _                                      = False
+        isPrim a = "#" `List.isSuffixOf` (showSDoc $ ppr a)
 
 mutantType (splitFunTy_maybe -> Just (a, b))
   = liftM2 mkFunTy (mutantType a) (mutantType b)
@@ -368,7 +370,9 @@ incrementalisedDictionary dictTy dictVal t = do
   
   includeArgs <- do
     incBox <- incBoxTyCon
-    return $ tyConAppTyCon base_t /= incBox
+    return $ case splitTyConApp_maybe base_t of
+               Just (t, _) -> t /= incBox
+               otherwise   -> True
   
   allArgs <- do
     let args = case splitTyConApp_maybe t of
