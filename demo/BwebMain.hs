@@ -5,4 +5,4 @@ import B
 import InctimeWeb
 import Bweb
 
-main = runApp parse_request (app_state []) app_state_incrementalised page_view 
+main = runApp parse_request (app_state ["hello"]) app_state_incrementalised page_view 

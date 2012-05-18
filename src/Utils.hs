@@ -22,9 +22,4 @@ map2M f g = mapM (\(a, b) -> do c <- f a
 listWithout n list = let (before, after) = splitAt n list
                       in before ++ (tail after)
 
-monadGuard :: (Monad m) => [(m Bool, m a)] -> m a
-monadGuard [] = undefined
-monadGuard ((t, v):as) = do t_result <- t
-                            case t_result of
-                              True -> v
-                              False -> monadGuard as
+

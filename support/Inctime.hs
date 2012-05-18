@@ -50,14 +50,6 @@ class Monoid_incrementalised base incrementalised where
   mappend_incrementalised :: incrementalised -> incrementalised -> incrementalised
   mconcat_incrementalised :: [incrementalised] -> incrementalised
 
-class (Eq base, Incrementalised base incrementalised) =>
-      Eq_incrementalised base incrementalised | incrementalised -> base where
-  eq_incrementalised :: incrementalised -> incrementalised -> Bool_incrementalised
-  eq_incrementalised a b | isIncrementalisedReplace a && isIncrementalisedReplace b
-                         = mkIncrementalisedReplace $ extractReplaceValue a == extractReplaceValue b
-                         | isIncrementalisedIdentity a && isIncrementalisedIdentity b
-                         = Bool_incrementalised_identity
-
 typeclass_MonoidZLZR_incrementalised = undefined
 
 typeclass_MonadZMZN_incrementalised = undefined
@@ -66,18 +58,13 @@ unit_incrementalised = ()
 
 id_incrementalised = id
 
--- why are the foralls in this order? Because it seems to work.
-compose_incrementalised :: forall b. forall b_inc. (Incrementalised b b_inc) =>
-                           forall c. forall c_inc. (Incrementalised c c_inc) =>
-                           forall a. forall a_inc. (Incrementalised a a_inc) =>
-                           (b -> c) -> (b_inc -> c_inc) ->
-                           (a -> b) -> (a_inc -> b_inc) -> a_inc -> c_inc
-compose_incrementalised f f_inc g g_inc = f_inc . g_inc
+compose_incrementalised :: forall a. forall a_inc. 
+                           forall b. forall b_inc.
+                           forall c. forall c_inc.
+                           (b_inc -> c_inc) -> (a_inc -> b_inc) -> a_inc -> c_inc
+compose_incrementalised = (.)
 
-apply_incrementalised :: forall a. forall a_inc. (Incrementalised a a_inc) =>
-                         forall b. forall b_inc. (Incrementalised b b_inc) =>
-                         (a -> b) -> (a_inc -> b_inc) -> a_inc -> b_inc
-apply_incrementalised f f_inc arg_inc = f_inc arg_inc
+apply_incrementalised = ($)
 
 
 class Num_incrementalised base incrementalised | incrementalised -> base where
@@ -104,8 +91,8 @@ instance Incrementalised Char Char_incrementalised where
   mkIncrementalisedIdentity = Char_incrementalised_identity
   mkIncrementalisedReplace = Char_incrementalised_replace
 
-data Bool_incrementalised = False_incrementalised
-                          | True_incrementalised
+data Bool_incrementalised = Bool_incrementalised_False
+                          | Bool_incrementalised_True
                           | Bool_incrementalised_replace Bool
                           | Bool_incrementalised_identity
   deriving (Show)
@@ -177,14 +164,14 @@ instance ApplicableIncrementalised Int Int_incrementalised where
 
 -- data ZMZN a = ZC a (ZMZN a) | []
 data BuiltinList_incrementalised a a_incrementalised = 
-                                                BuiltinList_incrementalised -- empty list constructor
-                                              | BuiltinListCons_incrementalised
+                                                BuiltinListCons_incrementalised
                                                    a_incrementalised 
                                                    (BuiltinList_incrementalised a a_incrementalised)
                                               | BuiltinList_incrementalised_build_using_1 a
                                               | BuiltinList_incrementalised_build_using_0 [a]
                                               | BuiltinList_incrementalised_identity -- that's ZMZN the type of lists, not ZMZN the empty list
                                               | BuiltinList_incrementalised_replace [a] -- replace the whole list with the specified value
+                                              | BuiltinList_incrementalised -- empty list constructor
   deriving (Show)
 
 instance (ApplicableIncrementalised elem elem_incrementalised) => 

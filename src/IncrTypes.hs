@@ -48,11 +48,11 @@ mutantId var = mk var' =<< (mutantType $ varType var)
                | isGlobalId var         = buildExpId mkGlobalVar
                | isExportedLocalVar var = buildExpId mkExportedLocalVar
                | isLocalVar var         = buildExpId mkLocalVar
-               where buildExpId mk' = (liftM4 mk'
+               where buildExpId mk' = liftM4 mk'
                                              (details var)
                                              (return n)
                                              (return t)
-                                             (return $ idInfo var))
+                                             (return $ idInfo var)
         details var = mutantIdDetails (idDetails var)
         isExportedLocalVar v = isExportedId v && isLocalVar v
 
@@ -79,67 +79,27 @@ lookupOrMutantId var = do
     Just v    -> return v
     otherwise -> mutantId var
 
---forAllTy forall a. (t -> a) -> [t] -> [a]
---tyConApp *
---appTy (t -> a) -> [t] -> [a]
---appTy [t] -> [a]
---appTy (->) [t]
---tyConApp (->)
---appTy [t]
---tyConApp []
---tyVar t
---appTy (->) (t -> a)
---tyConApp (->)
---appTy t -> a
---appTy (->) t
---tyConApp (->)
---tyVar t
---tyVar a
---appTy [a]
---tyConApp []
---tyVar a
---tyConApp *
--- appTy (appTy (->) (t -> a))
---       ([t] -> [a])
--- appTy (appTy (->) (t -> a))
---       (appTy (appTy (->) [t]) [a])
--- appTy (appTy (->) (appTy (appTy (->) t) a)
---       (appTy (appTy (->) [t]) [a])
 
-tracePpr s t = trace (s ++ " " ++ (showSDoc $ ppr t))
 
 mutantType :: Type -> TypeLookupM Type
-mutantType ty@(getTyVar_maybe -> Just tyVar)
+mutantType (getTyVar_maybe -> Just tyVar)
   = liftM mkTyVarTy $ mutantTyVar tyVar
-mutantType ty@(splitArrowAppTy_maybe -> Just (first, rest))
-  -- when we have a function of type (a -> b) -> [a] -> [b], we want to take
-  -- both an incrementalised and non-incrementalised version of the function:
-  -- (a -> b) -> 
-  -- (a_inc -> b_inc) -> 
-  -- List_incrementalised a a_inc ->
-  -- List_incrementalised b b_inc
-  -- this is about matching that (a -> b) case and doing the duplicatey thing.
-  | isArrowAppTy first = do first' <- mutantType first
-                            rest' <- mutantType rest
-                            return $ mkArrow first (mkArrow first' rest')
-  | otherwise = liftM2 mkArrow (mutantType first) (mutantType rest)
-mutantType ty@(splitAppTy_maybe -> Just (a, b))
-  | isPrim a  = liftM2 mkAppTy (mutantType a) (mutantType b)
-  | otherwise = liftM2 mkAppTy (liftM2 mkAppTy (mutantType a) (return b))
+mutantType (splitAppTy_maybe -> Just (a, b))
+  | isApp a   = liftM2 mkAppTy (mutantType a) (mutantType b)
+  | otherwise = liftM2 mkAppTy (mutantType a >>= return . (`mkAppTy` b))
                                (mutantType b)
-  -- not sure if this next one ever happens
-  | isArrowTyConApp a = liftM2 mkAppTy (mutantType a) (mutantType b)
-  where isArrowTyConApp (splitTyConApp_maybe -> Just (con, _)) = isFunTyCon con
-        isArrowTyConApp _                                      = False
-        isPrim a = "#" `List.isSuffixOf` (showSDoc $ ppr a)
+  -- | otherwise = liftM2 mkAppTy (do t <- mutantType a
+  --                                  return $ mkAppTy t b)
+  where isApp (splitTyConApp_maybe -> Just (con, _)) = isFunTyCon con
+        isApp _                                      = False
 
-mutantType ty@(splitFunTy_maybe -> Just (a, b))
+mutantType (splitFunTy_maybe -> Just (a, b))
   = liftM2 mkFunTy (mutantType a) (mutantType b)
 
-mutantType ty@(splitTyConApp_maybe -> Just (con, tys))
+mutantType (splitTyConApp_maybe -> Just (con, tys))
   = liftM2 mkTyConApp (lookupMutantTyCon con) (mapM mutantType tys)
 
-mutantType forallty@(splitForAllTy_maybe -> Just (tyVar, ty)) = do
+mutantType (splitForAllTy_maybe -> Just (tyVar, ty)) = do
   ty' <- mutantType ty
   tyVar' <- mutantTyVar tyVar
   incDType <- incrementalisedDictionaryType (mkTyVarTy tyVar) (mkTyVarTy tyVar')
@@ -378,8 +338,7 @@ varIncrementalisedDictionaryTy t var =
   return $ mkLocalVar VanillaId
                     (mutantNameIntoSpace (varName var)
                                       OccName.varName
-                                      ("incrementalisedD" ++
-                                           (show $varUnique var)))
+                                      "incrementalisedD")
                     t
                     vanillaIdInfo
 
@@ -409,9 +368,7 @@ incrementalisedDictionary dictTy dictVal t = do
   
   includeArgs <- do
     incBox <- incBoxTyCon
-    return $ case splitTyConApp_maybe base_t of
-               Just (t, _) -> t /= incBox
-               otherwise   -> True
+    return $ tyConAppTyCon base_t /= incBox
   
   allArgs <- do
     let args = case splitTyConApp_maybe t of
@@ -748,14 +705,4 @@ testVarOccName n baseName = mkOccName OccName.varName
                                       (baseName ++ "_test" ++ show n)
 
 
-splitArrowAppTy_maybe t = do -- maybe monad
-  (arrowAndFirst, rest) <- splitAppTy_maybe t
-  (arrow, first) <- splitAppTy_maybe arrowAndFirst
-  (funTyConCandidate, _) <- splitTyConApp_maybe arrow
-  if funTyConCandidate == funTyCon
-    then return (first, rest)
-    else mzero
 
-isArrowAppTy = isJust . splitArrowAppTy_maybe
-
-mkArrow a b = mkAppTy (mkAppTy (mkTyConApp funTyCon []) a) b
