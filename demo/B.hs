@@ -4,17 +4,13 @@ import Inctime
 import InctimeHtml
 
 
-filter = noIncLam (\f -> let filter' [] = []
-                             filter' (x:xs)
-                               | f x = x:(filter' xs)
-                               | otherwise = filter' xs
-                          in filter')
+filter f []                 = []
+filter f (x:xs) | f x       = x:(filter f xs)
+                | otherwise = filter f xs
 
-map = noIncLam (\f -> let map' [] = []
-                          map' (x:xs) = (f x):(map' xs)
-                       in map')
+map f [] = []
+map f (x:xs) = (f x):(map f xs)
                        
-
 [] ++ a = a
 (x:xs) ++ a = x:(xs ++ a)
 
@@ -30,29 +26,34 @@ data AppState = AppState { appStateNumWords :: Int
 
 data Input = NewWordInput String
            | NewDefinitionInput String String
-isNewWordInput (NewWordInput _) = True
-isNewWordInput _ = False
-isNewDefinitionInput (NewDefinitionInput _ _) = True
-isNewDefinitionInput _ = False
-newWordInputs = filter `noIncApp` isNewWordInput
-newDefinitionInputs = filter `noIncApp` isNewDefinitionInput
-definitionInputsFor w = (filter `noIncApp` ((== w) . wordFrom)) . newDefinitionInputs
+isNewWordInput i = case i of
+                     (NewWordInput _) -> True
+                     otherwise        -> False
+isNewDefinitionInput i = case i of
+                           (NewDefinitionInput _ _) -> True
+                           otherwise                -> False
+newWordInputs = filter isNewWordInput
+newDefinitionInputs = filter isNewDefinitionInput
+definitionInputsFor w inputs = filter (inputContainsWord w) (newDefinitionInputs inputs)
 wordFrom (NewWordInput w) = w
 wordFrom (NewDefinitionInput w _) = w
-definitionFrom (NewDefinitionInput _ d) = d
-definitionFrom _ = error "No definition"
+inputContainsWord word i = wordFrom i == word
+definitionFrom i = case i of 
+                     (NewDefinitionInput _ d) -> d
+                     otherwise                -> error "No definition"
 
 wordDefinitions (WordDefinitions _ ds) = ds
 
 app_state inputs
-  = AppState { appStateNumWords = length $ words inputs
-             , appStateNumDefinitions = elems_length $ map `noIncApp` wordDefinitions $ definitions inputs
+  = AppState { appStateNumWords = length (words inputs)
+             , appStateNumDefinitions = elems_length (map wordDefinitions (definitions inputs))
              , appStateWords = words inputs
              , appStateDefinitions = definitions inputs
              }
-  where words inputs = map `noIncApp` wordFrom $ newWordInputs inputs
-        definitions inputs = map `noIncApp` (\w -> (WordDefinitions w $ word_definitions w inputs)) $ words inputs
-        word_definitions w inputs = map `noIncApp` definitionFrom $ definitionInputsFor w inputs
+  where words inputs = map wordFrom (newWordInputs inputs)
+        definitions inputs = let f inputs w = word_definitions w inputs
+                              in map (f inputs) (words inputs)
+        word_definitions w inputs = WordDefinitions w (map definitionFrom (definitionInputsFor w inputs))
 
 elems_length [] = 0
 elems_length (w:ws) = (length w) + (elems_length ws)
@@ -73,17 +74,17 @@ page_view state = domElem "div" [
     tElemB (IncBox (\x -> show x ++ " words.") (appStateNumWords state)),
     tElemB (IncBox (\x -> show x ++ " definitions.") (appStateNumDefinitions state))
   ],
-  domElem "div" $ map (\(WordDefinitions word definitions) ->
-                         domElem "div" [
-                           tElem word,
-                           domElem "div" $ map (\definition ->
-                                                   domElem "div" [
-                                                     tElem definition
-                                                   ]
-                                               ) definitions
-                         ]
-                      )
-                      (appStateDefinitions state)
+  domElem "div" (map (\(WordDefinitions word definitions) ->
+                        domElem "div" [
+                          tElem word,
+                          domElem "div" (map (\definition ->
+                                                 domElem "div" [
+                                                   tElem definition
+                                                 ]
+                                             ) definitions)
+                        ]
+                     )
+                     (appStateDefinitions state))
   ,
   elemA "form" [Attr "method" "post"] [
     elemA "input" [Attr "name" "word"] [],

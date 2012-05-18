@@ -11,7 +11,8 @@ import GHC (getName)
 import CoreSyn
 import DataCon
 import Id
-import IdInfo (IdDetails (DataConWrapId, DataConWorkId), isDeadOcc, occInfo)
+import IdInfo (IdDetails (DataConWrapId, DataConWorkId))
+import MkId (realWorldPrimId)
 import Outputable
 import PrelNames (statePrimTyConKey)
 import Type
@@ -46,8 +47,6 @@ mutantExp (Var id) = liftM Var $ lookupOrMutantId id
 mutantExp app@(App expr arg)
   = monadGuard [
       (return $ isIncBoxApp app ,mutantIncBoxApp app)
-     ,(isNoIncApp app           ,mutantNoIncApp app)
-     ,(isNoIncLam app           ,mutantNoIncLam app)
      ,(return $ isPrimCon expr  ,mutantPrimCon expr arg)
      ,(return $ isTypeArg arg && (isRealWorld $ exprType arg), do
          expr' <- mutantExp expr
@@ -62,7 +61,11 @@ mutantExp app@(App expr arg)
          expr' <- mutantExp expr
          arg' <- mutantExp arg
          argD <- expIncrementalisedDictionary arg
-         return $ App (App (App expr' arg) arg') argD)
+         return $ expr' `App` arg `App` arg' `App` argD)
+     ,(return $ isArrowAppTy $ exprType arg, do
+         expr' <- mutantExp expr
+         arg' <- mutantExp arg
+         return $ expr' `App` arg `App` arg')
      ,(return True              ,liftM2 App (mutantExp expr) (mutantExp arg))]
 -- for \ a -> b, need to check if all args are identity
 -- If so, produce an identity of the result type.
@@ -106,10 +109,18 @@ mutantLam expr = do
   additionalVars' <- mapM lookupOrMutantId additionalVars
   let allValVars = valVars ++ additionalVars
   let allValVars' = valVars' ++ additionalVars'
-  let valVarsWithMutants = filter (not . isFunTy . varType . fst) $
+  let valVarsWithMutants = filter (not . isArrowAppTy . varType . fst) $
                              filter (not . isRealWorld . varType . fst) $ 
                                zip allValVars allValVars'
 
+  let includeNonMutantArrowApps vars vars'
+       = concat $ zipWith (\var var' ->
+                             if isArrowAppTy $ varType var
+                               then [var, var']
+                               else [var']) vars vars'
+  let valArgs = includeNonMutantArrowApps allValVars allValVars'
+  let additionalVarsArgs = includeNonMutantArrowApps additionalVars
+                                                     additionalVars'
   finalResultTy' <- mutantType finalResultTy
   valDicts <- forM  valVarsWithMutants $ \(valVar, valVar') -> do
     dictVar <- varIncrementalisedDictionary incrementalisedDictionaryType
@@ -119,23 +130,23 @@ mutantLam expr = do
     dictVal <- expIncrementalisedDictionary (Type $ varType valVar)
     return $ NonRec dictVar dictVal
 
-  scrutinee <- do
-    tests <- forM valVarsWithMutants $ \(valVar, valVar') -> do
-      ts <- incrementalisedIdentityTest
-      dict <- varIncrementalisedDictionary incrementalisedDictionaryType
-                                           valVar
-                                           (typeFor valVar)
-                                           (typeFor valVar')
-      return $ mkApps (Var ts) [ Type (varType valVar)
-                               , Type (varType valVar')
-                               , Var dict
-                               , Var valVar']
+  let scrutinee ts
+       = do tests <- forM valVarsWithMutants $ \(valVar, valVar') -> do
+              dict <- varIncrementalisedDictionary incrementalisedDictionaryType
+                                                   valVar
+                                                   (typeFor valVar)
+                                                   (typeFor valVar')
+              return $ mkApps (Var ts) [ Type (varType valVar)
+                                       , Type (varType valVar')
+                                       , Var dict
+                                       , Var valVar']
 
-    and <- lookupPreludeFn "" "&&"
-    return $ foldl (\a b -> mkApps (Var and) [a,b]) 
-                   (Var $ dataConWrapId trueDataCon)
-                   tests
-      
+            and <- lookupPreludeFn "" "&&"
+            return $ foldl (\a b -> mkApps (Var and) [a,b]) 
+                           (Var $ dataConWrapId trueDataCon)
+                           tests
+  identityScrutinee <- scrutinee =<< incrementalisedIdentityTest
+  replacementScrutinee <- scrutinee =<< incrementalisedReplaceTest
 
   exprRemaining' <- mutantExp exprRemaining
 
@@ -145,18 +156,52 @@ mutantLam expr = do
     return $ mkApps (Var mk) [ Type finalResultTy
                              , Type finalResultTy'
                              , dict]
+  mkReplace <- do
+    mk <- incrementalisedReplaceMk
+    extract <- incrementalisedReplaceExtractor
+    dict <- expIncrementalisedDictionary $ Type $ finalResultTy
+    let arg (valVar, valVar')
+         | isArrowAppTy $ varType valVar = return $ Var valVar
+         | isRealWorld (varType valVar) = return $ Var realWorldPrimId
+         | otherwise
+         = do varDict <- expIncrementalisedDictionary (Type $ varType valVar)
+              return $ mkApps (Var extract)
+                             [Type $ varType valVar
+                             ,Type $ varType valVar'
+                             ,varDict
+                             ,Var valVar']
+    args <- mapM arg (zip allValVars allValVars')
 
-  return $ mkLams (tyVars' ++ allValVars') $ 
+          
+    let appExpr = mkApps expr $ map (Type . mkTyVarTy) tyVars ++ args
+    return $ mkApps (Var mk) [ Type finalResultTy
+                             , Type finalResultTy'
+                             , dict
+                             , appExpr]
+
+
+  let identityAndReplacementTestExpr innerExpr
+        | valVarsWithMutants == []
+        = innerExpr
+        | otherwise
+        = Case identityScrutinee
+               (testArgVar suffix boolTy 0)
+               finalResultTy'
+               [(DataAlt falseDataCon
+                ,[]
+                ,Case replacementScrutinee
+                      (testArgVar suffix boolTy 1)
+                      finalResultTy'
+                      [(DataAlt falseDataCon
+                       ,[]
+                       ,innerExpr)
+                      ,(DataAlt trueDataCon, [], mkReplace)])
+               ,(DataAlt trueDataCon, [], mkIdentity)]
+
+  return $ mkLams (tyVars' ++ valArgs) $ 
              mkLets valDicts $
-               Case scrutinee
-                    (testArgVar suffix
-                                (mkTyConTy boolTyCon)
-                                0)
-                    finalResultTy'
-                    [(DataAlt falseDataCon
-                     ,[]
-                     , mkApps exprRemaining' (map Var additionalVars'))
-                    ,(DataAlt trueDataCon, [], mkIdentity)]
+               identityAndReplacementTestExpr $
+                 mkApps exprRemaining' (map Var additionalVarsArgs)
   
 isIncBoxApp exp = isJust $ splitBoxApp_maybe exp
 splitBoxApp = fromJust . splitBoxApp_maybe
@@ -188,49 +233,6 @@ mutantIncBoxApp app = do
                   ,boxFun
                   ,boxVal']
 
-isNoIncApp exp = fmap isJust $ splitNoIncApp_maybe exp
-splitNoIncApp exp = fmap fromJust $ splitNoIncApp_maybe exp
-splitNoIncApp_maybe app = do
-  noIncAppUniq <- liftM idUnique noIncAppId
-  let isIncAppVar (Var v) = idUnique v == noIncAppUniq
-      isIncAppVar _       = False
-  case app of
-   ((isIncAppVar -> True) `App` 
-      (Type fType) `App`
-      (Type argType) `App`
-      f@(isTypeArg -> False) `App`
-      arg@(isTypeArg -> False)) -> return $ Just (fType, argType
-                                                 ,f, arg)
-   otherwise                    -> return Nothing
-mutantNoIncApp app = do
-  (fType, argType, f, arg) <- splitNoIncApp app
-  f' <- mutantExp f -- this must be an id or a lam that has a 
-                    -- matching NoIncLam
-  arg' <- mutantExp arg
-  return $ f' `App` arg `App` arg'
-
-
-isNoIncLam expr = liftM isJust $ splitNoIncLam_maybe expr
-splitNoIncLam_maybe exp = do
-  noIncLamUniq <- liftM idUnique noIncLamId
-  let isNoIncLamVar (Var v) = idUnique v == noIncLamUniq
-      isNoIncLamVar _       = False
-  case exp of
-    ((isNoIncLamVar -> True) `App` 
-      (Type fTy) `App`
-      (Type resultTy) `App`
-      (Lam argBind fBody)) -> return $ Just (argBind, resultTy, fBody)
-    otherwise -> return Nothing
-splitNoIncLam expr = liftM fromJust $ splitNoIncLam_maybe expr
-
-mutantNoIncLam expr = do
-  (argBind, resultTy, fBody) <- splitNoIncLam expr
-  fBody' <- mutantExp fBody
-  argBind' <- mutantId argBind
-  return $ Lam argBind $
-             Lam argBind' $
-               fBody'
-
 isPrimCon (Var id) = "#" `List.isSuffixOf` (nameString $ 
                                               varName id)
 isPrimCon _ = False
@@ -247,7 +249,6 @@ mutantPrimCon expr arg = do let ty = exprType (App expr arg)
 mutantAlts = liftM catMaybes . mapM mutantAlt
 
 mutantAlt :: Alt CoreBndr -> TypeLookupM (Maybe (Alt CoreBndr))
-mutantAlt (DataAlt _, [], _) = return Nothing -- handled by replaceAlt
 mutantAlt ((DataAlt dataCon), binds, expr) = do
   dataCon' <- lookupMutantDataCon dataCon
   binds' <- mapM mutantId binds
@@ -260,53 +261,9 @@ mutantAlt _ = return Nothing -- if we handle changes-moving-into-a-value, then
                              -- we should probably do something  here
 
 introduceSpecialAltCases c alts = do
-  let (defaultAlts, nonDefaultAlts)
-        = List.partition (\(a, _, _) -> a == DEFAULT) alts
-  r <- replaceAlt' c defaultAlts
   b <- builderAlts' c
-  return $ [(DEFAULT, [], r)] ++ nonDefaultAlts ++ b
+  return $ alts ++ b
 
-
-replaceAlt' c@(Case expr id type_ alts) defaultAlts = do
-  destType <- mutantType type_
-  srcType  <- mutantType $ exprType expr
-  expr' <- mutantExp expr
-  dict <- expIncrementalisedDictionary (Type $ exprType expr)
-
-  replaceTest <- do
-    t <- incrementalisedReplaceTest
-    return $ mkApps (Var t) [Type $ exprType expr
-                            ,Type srcType
-                            ,dict]
-  replaceExtractor <- do
-    t <- incrementalisedReplaceExtractor
-    return $ mkApps (Var t) [Type $ exprType expr
-                            ,Type srcType
-                            ,dict]
-  replaceExp <- do
-    mkReplace <- incrementalisedReplaceMk
-    destDict <- expIncrementalisedDictionary (Type type_)
-    let binders = (if isExprVar expr then [exprVar expr] else []) ++
-                  (if (not . isDeadOcc . occInfo . idInfo) id
-                      || (not . isExprVar) expr then [id] else [])
-    let trueBinder = head binders
-    let replaceLet = NonRec trueBinder $ App replaceExtractor expr'
-    let replaceLets = replaceLet:(map (`NonRec` (Var trueBinder))
-                                      (tail binders))
-    return $ mkLets replaceLets $
-               mkApps (Var mkReplace)
-                      [Type type_
-                      ,Type destType
-                      ,destDict
-                      ,c]
-  return $ Case (App replaceTest expr')
-                (testArgVar "replaceAlt" (mkTyConTy boolTyCon) 0)
-                destType
-                (defaultAlts ++
-                [(DataAlt trueDataCon
-                 ,[]
-                 ,replaceExp)]
-                )
 
 
 builderAlts' c@(Case expr id type_ alts)

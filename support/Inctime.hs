@@ -30,11 +30,6 @@ data IncBox_incrementalised b b_incrementalised
      (ApplicableIncrementalised a a_incrementalised, Data a) =>
      IncBox_incrementalised (a -> b) a_incrementalised
 
-noIncLam :: forall a. forall b. (a -> b) -> (a -> b)
-noIncLam = id
-noIncApp :: forall a. forall b. (a -> b) -> (a -> b)
-noIncApp = id
-
 instance ApplicableIncrementalised (IncBox b)
                                    (IncBox_incrementalised b b_incrementalised) where 
   applyInputChange (IncBox_incrementalised f v') (IncBox _ v)
@@ -75,13 +70,14 @@ id_incrementalised = id
 compose_incrementalised :: forall b. forall b_inc. (Incrementalised b b_inc) =>
                            forall c. forall c_inc. (Incrementalised c c_inc) =>
                            forall a. forall a_inc. (Incrementalised a a_inc) =>
-                           (b_inc -> c_inc) -> (a_inc -> b_inc) -> a_inc -> c_inc
-compose_incrementalised = (.)
+                           (b -> c) -> (b_inc -> c_inc) ->
+                           (a -> b) -> (a_inc -> b_inc) -> a_inc -> c_inc
+compose_incrementalised f f_inc g g_inc = f_inc . g_inc
 
 apply_incrementalised :: forall a. forall a_inc. (Incrementalised a a_inc) =>
                          forall b. forall b_inc. (Incrementalised b b_inc) =>
-                         (a_inc -> b_inc) -> a_inc -> b_inc
-apply_incrementalised = ($)
+                         (a -> b) -> (a_inc -> b_inc) -> a_inc -> b_inc
+apply_incrementalised f f_inc arg_inc = f_inc arg_inc
 
 
 class Num_incrementalised base incrementalised | incrementalised -> base where
@@ -181,14 +177,14 @@ instance ApplicableIncrementalised Int Int_incrementalised where
 
 -- data ZMZN a = ZC a (ZMZN a) | []
 data BuiltinList_incrementalised a a_incrementalised = 
-                                                BuiltinListCons_incrementalised
+                                                BuiltinList_incrementalised -- empty list constructor
+                                              | BuiltinListCons_incrementalised
                                                    a_incrementalised 
                                                    (BuiltinList_incrementalised a a_incrementalised)
                                               | BuiltinList_incrementalised_build_using_1 a
                                               | BuiltinList_incrementalised_build_using_0 [a]
                                               | BuiltinList_incrementalised_identity -- that's ZMZN the type of lists, not ZMZN the empty list
                                               | BuiltinList_incrementalised_replace [a] -- replace the whole list with the specified value
-                                              | BuiltinList_incrementalised -- empty list constructor
   deriving (Show)
 
 instance (ApplicableIncrementalised elem elem_incrementalised) => 

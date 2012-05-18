@@ -131,7 +131,7 @@ process targetFile modName = do
                  -- >>= traceCoreModuleG
       liftIO $ do
         showAllModuleContents $ mg_types $ dm_core_module $ d'
-        putStrLn $ showSDocDebug $ ppr $ mg_binds $ dm_core_module d'
+        putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d'
         putStrLn $ ms_hspp_file modSum
 
       liftIO $ do
