@@ -1,1 +1,0 @@
-../../../ghcjs/examples/rts-common.js
