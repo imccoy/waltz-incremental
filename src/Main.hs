@@ -16,10 +16,10 @@ import Language.Core.ParseGlue
 
 envInsert k v (Env m) = Env $ Map.insert k v m
 envLookup k@(Just (M (package, modsIds, modId)), varId) (Env m)
-   | package == basePackage = builtin baseFunc
-   | package == integerPackage = builtin integerFunc
+   | package == basePackage
+       || package == integerPackage
+   = Just $ Thunk envEmpty (RtExp $ baseFunc modsIds modId varId) []
    | otherwise = Map.lookup k m
-   where builtin f = Just $ Thunk envEmpty (RtExp $ f modsIds modId varId) []
 envLookup k (Env m) = Map.lookup k m
 
 envFromModules :: [Module] -> Env
@@ -53,8 +53,9 @@ deepseq value = go $ whnf value
 reduce thunk@(Thunk {thunkExp = (RtExp f) }) = f $ map whnf $ thunkArgs thunk
 reduce thunk@(Thunk {thunkExp = (CoreExp exp)}) = go exp
  where
+  -- this establishes a link from val to var
   go (Var qVar)           = let val = fromJustNote ("Looking for var " 
-                                                      ++ show qvar) $ 
+                                                      ++ show qVar) $ 
                                            envLookup qVar $ thunkEnv thunk
                              in if isThunkValue val
                                   then val { thunkArgs = thunkArgs val
