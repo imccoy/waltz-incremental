@@ -8,6 +8,8 @@ basePackage = P "base"
 integerPackage = P "integerzmgmp"
 ghcTypesModule = M (primPackage, ["GHC"], "Types")
 ghcNumModule = M (basePackage, ["GHC"], "Num")
+ghcBaseModule = M (basePackage, ["GHC"], "Base")
+ghcGmpIntModule = M (integerPackage, ["GHC"], "Integer")
 
 emptyList = (Just ghcTypesModule, "ZMZN")
 consList = (Just ghcTypesModule, "ZC")
