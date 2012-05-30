@@ -69,21 +69,22 @@ zdfNumInteger = do
 
 
 
-tcDictMethod :: Value -> Int -> HeapM HeapValue
-tcDictMethod (DataValue v methods) n = return $
+tcDictMethod :: Int -> Value -> HeapM HeapValue
+tcDictMethod n (DataValue v methods) = return $
                                        atNote ("Can't get method " ++ show n ++
                                                    " of " ++ show v)
                                               methods
                                               n
-tcDictMethod v _ = badArgs "tcDictMethod" [v]
+tcDictMethod _ v = badArgs "tcDictMethod" [v]
 
-addThunkArgs :: [HeapValue] -> HeapValue -> HeapM Value
-addThunkArgs [] t = heapGet t
-addThunkArgs a v = heapGet v >>= go
-  where go t@(Thunk {thunkArgs = a'}) = return $ t { thunkArgs = a' ++ a }
-        go v = badArgs "addThunkArgs" =<< liftM (v:) (mapM heapGet a)
+addThunkArgs :: [HeapValue] -> Value -> HeapM Value
+addThunkArgs [] t = return t
+addThunkArgs a t@(Thunk {thunkArgs = a'}) = return $ t { thunkArgs = a' ++ a }
+addThunkArgs a v = badArgs "addThunkArgs" =<< liftM (v:) (mapM heapGet a)
 
 tcThunk :: Int -> [HeapValue] -> HeapM Value
 tcThunk n a@(dict:args) = addThunkArgs args =<<
-                                ((\d -> tcDictMethod d n) =<< heapGet dict)
+                                (heapGet dict
+                                      >>= tcDictMethod n
+                                      >>= heapGet)
 

@@ -58,8 +58,7 @@ reduce' heapValue thunk@(Thunk { thunkExp = (RtExp f _ a) })= do
   mapM_ whnf $ thunkArgs thunk
   case compare a (length (thunkArgs thunk)) of
     LT -> do let (a1, a2) = splitAt a (thunkArgs thunk)-- oversaturated
-             heapSet heapValue =<< f a1
-             addThunkArgs a2 heapValue
+             addThunkArgs a2 =<< f a1
     EQ -> do f $ thunkArgs thunk
     GT -> do h <- heapGetFull
              error ("PAP (got " ++ show (length $ thunkArgs thunk) ++
@@ -72,14 +71,12 @@ reduce' heapValue thunk@(Thunk { thunkExp = (CoreExp exp)}) = go exp
                                       ("Looking for var " ++ show qVar)
                                       (envLookup qVar $ thunkEnv thunk)
                            val' <- heapGet val
-                           return $ if isThunkValue val'
-                                      then val' { thunkArgs = thunkArgs val'
-                                                            ++ thunkArgs thunk }
-                                      else assertNote
-                                             ("losing args " ++
-                                                       (show $ thunkArgs thunk))
-                                             (length (thunkArgs thunk) == 0)
-                                             val'
+                           return $ reduceVar val' (thunkArgs thunk)
+    where reduceVar val'@(Thunk {}) args = val' { thunkArgs = thunkArgs val'
+                                                                      ++ args}
+          reduceVar val' []              = val'
+          reduceVar val' nonEmptyArgs    = error $ "losing args "
+                                                     ++ (show $ thunkArgs thunk)
   go (Dcon qDcon)     = return $ DataValue { tag = qDcon
                                            , dataArgs = thunkArgs thunk }
   go (Lit lit)        = return $ reduceLit lit
