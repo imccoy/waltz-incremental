@@ -1,32 +1,78 @@
 module B where
 
-import Prelude hiding (head, length)
+import Prelude hiding (head, length, filter, map)
 
-head (x:_) = x
-length (x:xs) = 1 + length xs
-length [] = 0
+type Word = String
+type Definition = String
+data Input = NewWord Word
+           | NewDefinition Word Definition
 
-data TryInt =  TryIntP Int
+type State = [(Word, [Definition])]
 
-data TryList a = EmptyTryList | ConsTryList a (TryList a)
+inputWord (NewWord w) = w
+inputWord (NewDefinition w _) = w
+inputDefinition (NewDefinition _ d) = d
+isNewWord (NewWord _) = True
+isNewWord _ = False
+isNewDefinition (NewDefinition _ _) = True
+isNewDefinition _ = False
+isNewDefinitionFor w i = isNewDefinition i && w `strEq` inputWord i
 
-data AppState = AppState { appStateWordsLength :: Integer
-                         , appStateWords :: [String]
-                         , appStateMostRecentWord :: String
-                         }
+map f [] = []
+map f (x:xs) = (f x):(map f xs)
 
-thing True = "yes"
-thing False = "no"
+for xs f = map f xs
 
-initial_state = ["welcome"]
+strEq :: String -> String -> Bool
+strEq [] [] = True
+strEq (a:as) (b:bs) = a == b && strEq as bs
+strEq _ _ = False
 
-app_state words = AppState { appStateWordsLength = words_length words
-                           , appStateWords = words
-                           , appStateMostRecentWord = head words }
+filter f [] = []
+filter f (x:xs) | f x       = x:(filter f xs)
+                | otherwise = filter f xs
 
-words_length [] = 0
-words_length (w:ws) = (length w) + (words_length ws)
+length :: [a] -> Integer -> Integer
+length [] n = n
+length (x:xs) n = length xs (n + 1)
 
+initial_state :: [Input]
+initial_state = [NewWord "Cat",
+                 NewDefinition "Cat" "A regal housepet",
+                 NewDefinition "Cat" "A tiny tiger",
+                 NewWord "Dog",
+                 NewDefinition "Dog" "A loyal housepet"]
+
+app_state :: [Input] -> State
+app_state inputs = for (map inputWord (filter isNewWord inputs)) (\w ->
+                     (w, map inputDefinition
+                           (filter (isNewDefinitionFor w) inputs)))
+
+--head (x:_) = x
+--length (x:xs) = 1 + length xs
+--length [] = 0
+--
+--data TryInt =  TryIntP Int
+--
+--data TryList a = EmptyTryList | ConsTryList a (TryList a)
+--
+--data AppState = AppState { appStateWordsLength :: Integer
+--                         , appStateWords :: [String]
+--                         , appStateMostRecentWord :: String
+--                         }
+--
+--thing True = "yes"
+--thing False = "no"
+--
+--initial_state = ["welcome"]
+--
+--app_state words = AppState { appStateWordsLength = words_length words
+--                           , appStateWords = words
+--                           , appStateMostRecentWord = head words }
+--
+--words_length [] = 0
+--words_length (w:ws) = (length w) + (words_length ws)
+--
 --page_view state = domElem "div" [
 --  domElem "h1" [tElem "The Word Monster"],
 --  domElem "p" [

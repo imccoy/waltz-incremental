@@ -3,8 +3,7 @@ module Fauxlude where
 import Builtins
 import Types
 
-import Control.Monad (liftM, liftM2)
-import Data.Foldable (foldrM)
+import Control.Monad (liftM)
 import Safe
 
 import Language.Core.Core (AnMname, Id)
@@ -12,6 +11,10 @@ import Language.Core.Core (AnMname, Id)
 builtinsEnv :: HeapM Env
 builtinsEnv
    = addBuiltin ghcBaseModule "unpackCStringzh" unpackCString 1 envEmpty >>=
+     addBuiltinH ghcBaseModule "zd" zd 2 >>=
+     addBuiltinH ghcClassesModule "zaza" zaza 2 >>=
+     addBuiltinH ghcClassesModule "zeze" (tcThunk 0) 1 >>=
+     addBuiltinM ghcClassesModule "zdfEqChar" zdfEqChar 0 >>=
      addBuiltinH ghcNumModule "zp" (tcThunk 0) 1 >>=
      addBuiltinH ghcNumModule "fromInteger" (tcThunk 6) 1 >>=
      addBuiltinM ghcNumModule "zdfNumInteger" zdfNumInteger 0 >>=
@@ -34,9 +37,18 @@ addBuiltinH mod name f arity env = do
   heapValue <- heapAdd (Thunk envEmpty (RtExp f name arity) [])
   return $ envInsert (Just mod, name) heapValue env
 
-unpackCString [StringValue s] = foldrM go emptyListValue s
-  where go c s = liftM2 consListValue (heapAdd $ CharValue c) (heapAdd s)
+unpackCString [StringValue s] =  mkRuntimeString s
 unpackCString args = badArgs "unpackCStringzh" args
+
+zd :: [HeapValue] -> HeapM Value
+zd [a, b] = do a' <- heapGet a
+               addThunkArgs [b] a'
+
+zaza :: [HeapValue] -> HeapM Value
+zaza [a, b] = do a' <- heapGet a
+                 case truthy a' of
+                   True -> heapGet b
+                   False -> return $ untruthy False
 
 smallInteger [IntegralValue i] = return $ IntegralValue i
 smallInteger args = badArgs "smallInteger" args
@@ -45,11 +57,18 @@ badArgs :: String -> [Value] -> HeapM a
 badArgs n [] = error $ n ++ " not defined for []"
 badArgs n args = heapGetFull >>= (\h -> error $ n ++ " not defined for "
                                             ++ concat (map (showValue h) args))
+zdfMk (f,a,n) = heapAdd (Thunk envEmpty
+                               (RtExp (heapGetArgs f) n a)
+                               [])
+
+zdfEqChar = do
+  addrs <- mapM zdfMk
+                [(zezeChar,2,"zezeChar")]
+  return $ (\_ -> return $ DataValue (Just ghcClassesModule, "DZCEq") addrs)
+  where zezeChar [CharValue a, CharValue b] = return $ untruthy $ a == b 
 
 zdfNumInteger = do
-  addrs <- mapM (\(f,a,n) -> heapAdd (Thunk envEmpty
-                                      (RtExp (heapGetArgs f) n a)
-                                      []))
+  addrs <- mapM zdfMk
                 [(zpInteger,2,"zpInteger")
                 ,(undefined,undefined,"subtract") -- subtract
                 ,(undefined,undefined,"multiply") -- multiply
