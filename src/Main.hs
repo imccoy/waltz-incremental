@@ -3,10 +3,10 @@ module Main where
 
 import Builtins
 import Fauxlude
-import Graph
 import Types
 
 import Control.Monad (when, forM_)
+import qualified Data.Map as Map
 import Data.Foldable (foldrM)
 import System.IO
 import System.Exit
@@ -169,13 +169,15 @@ change :: HeapValue -> Value -> HeapM ()
 change heapValue newValue = do
   oldValue <- heapGet heapValue
   when (oldValue /= newValue) $ do
-    deps <- heapGetDeps heapValue
+    thunkDeps <- heapGetDeps heapValue
     heapSet heapValue newValue
-    updateDependents deps
-  where updateDependents [] = return ()
-        updateDependents ((addr, thunk):deps) = do
-          change addr thunk
-          updateDependents deps
+    updateDependents thunkDeps
+  where updateDependents = updateDependents' . Map.minViewWithKey
+        updateDependents' Nothing = return ()
+        updateDependents' (Just ((thunk, addrsThunks), thunkDeps)) = do
+          forM_ addrsThunks $ \(addr, thunk) ->
+            change addr thunk
+          updateDependents thunkDeps
 
 
 altExp (Acon _ _ _ exp) = exp
@@ -241,9 +243,6 @@ main = do
   let ((input, value), heap) = runHeapEmpty $ initialValue mods
   putStrLn $ "Starting output =\t\t\t" ++
                 showValue heap (fst $ runHeap heap $ heapGet value)
-  graphFile <- openFile "graph" WriteMode
-  hPutStr graphFile $ showGraph $ fst heap
-  hClose graphFile
   let ((input', value'), heap') = runHeap heap $ addValue mods input value
   putStrLn $ "Output after prepending to list =\t" ++
     showValue heap' (fst $ runHeap heap' $ heapGet value')

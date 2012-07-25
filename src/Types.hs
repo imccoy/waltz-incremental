@@ -6,6 +6,7 @@ import qualified Data.Array as Array
 import Data.List (intersperse)
 import Data.Maybe (fromJust)
 import qualified Data.Map as Map
+import Data.Map (Map)
 
 import Language.Core.Core
 import Language.Core.Parser()
@@ -24,6 +25,12 @@ instance Eq InterpExp where
   (RtExp _ s n) == (RtExp _ s2 n2) = s == s2 && n == n2
   _ == _ = False
 
+instance Ord InterpExp where
+  (CoreExp exp1) `compare` (CoreExp exp2) = exp1 `compare` exp2
+  (RtExp _ s1 _) `compare` (RtExp _ s2 _) = s1 `compare` s2
+  (CoreExp _) `compare` (RtExp _ _ _) = LT
+  (RtExp _ _ _) `compare` (CoreExp _) = GT
+
 type HeapValue = Integer
 data Value = Thunk { thunkEnv :: Env
                    , thunkExp :: InterpExp
@@ -34,12 +41,23 @@ data Value = Thunk { thunkEnv :: Env
            | StringValue { stringValue :: String }
   deriving (Eq)
 
-deriving instance Eq Bind
-deriving instance Eq Vdefg
-deriving instance Eq Vdef
-deriving instance Eq Kind
 deriving instance Eq Alt
+deriving instance Ord Alt
+deriving instance Eq Bind
+deriving instance Ord Bind
 deriving instance Eq Exp
+deriving instance Ord Exp
+deriving instance Eq Kind
+deriving instance Ord Kind
+deriving instance Ord Lit
+deriving instance Ord CoreLit
+deriving instance Ord Ty
+deriving instance Eq Vdef
+deriving instance Ord Vdef
+deriving instance Eq Vdefg
+deriving instance Ord Vdefg
+
+
 
 showValue heap (Thunk env exp args) = "Thunk\n" ++
                                         indent 6 (show exp) ++ "\n" ++
@@ -62,7 +80,7 @@ showArgs heap args = indent 2 $ joinLines $ map f args
 showValueHeap (v, h) = showValue h v
 
 type Dependent = (HeapValue, Value) -- the value must be a thunk
-type Dependents = [Dependent]
+type Dependents = Map InterpExp [Dependent]
 type HeapStore = Array.Array HeapValue (Maybe (Value, Dependents))
 type Heap = (HeapStore, HeapValue)
 type HeapM = State Heap
@@ -93,9 +111,9 @@ heapAdd v = do (vs, i) <- get
                      i
                      v
            | otherwise
-           = vs Array.// [(i, Just (v, []))]
+           = vs Array.// [(i, Just (v, Map.empty))]
 
-heapSet i v = heapGetStore >>= heapSetStore . (Array.// [(i, Just (v, []))])
+heapSet i v = heapGetStore >>= heapSetStore . (Array.// [(i, Just (v, Map.empty))])
 heapSetWithDeps i v d = heapGetStore >>=
                         heapSetStore . (Array.// [(i, Just (v, d))])
 heapGet i = heapGetStore >>= return . fst. fromJust . (Array.! i)
@@ -106,12 +124,16 @@ heapChange f i = do (v, d) <- heapGetWithDeps i
                     heapSetWithDeps i v' d
 
 dependsOn d@(_, Thunk {}) (i, reason) = heapGetStore >>= heapSetStore . f
-  where f arr = let (v, deps) = fromJust $ arr Array.! i
-                 in arr Array.// [(i, Just (v, add d deps))]
-        add d@(heapValue, thunk) deps
-         | heapValue `elem` map fst deps = deps
-         | otherwise                     = d:deps 
-heapGetDeps i = heapGetStore >>= return . snd. fromJust . (Array.! i)
+  where f arr = let (v, thunkDeps) = fromJust $ arr Array.! i
+                 in arr Array.// [(i, Just (v, add d thunkDeps))]
+        add d@(_, thunk) thunkDeps = Map.alter (add' d)
+                                               (thunkExp thunk)
+                                               thunkDeps
+        add' d@(heapValue, _) (Just deps)
+         | heapValue `elem` map fst deps = Just deps
+         | otherwise                     = Just $ d:deps
+        add' d                    Nothing = Just [d]
+heapGetDeps i = heapGetStore >>= return . snd . fromJust . (Array.! i)
 
 indent :: Int -> String -> String
 indent n = joinLines . map (replicate n ' ' ++) . lines
