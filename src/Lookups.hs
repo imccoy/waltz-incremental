@@ -236,6 +236,21 @@ incBoxTyCon
                                    "IncBox"
                                    OccName.tcName
 
+noIncLamId :: TypeLookupM Id
+noIncLamId
+  = lookupAndConvertInctimeTyThing tyThingId
+                                   "noIncLamId"
+                                   "noIncLam"
+                                   OccName.varName
+
+noIncAppId :: TypeLookupM Id
+noIncAppId
+  = lookupAndConvertInctimeTyThing tyThingId
+                                   "noIncAppId"
+                                   "noIncApp"
+                                   OccName.varName
+
+
 
 lookupPreludeFn :: String -> String -> TypeLookupM Var
 lookupPreludeFn m n = do
