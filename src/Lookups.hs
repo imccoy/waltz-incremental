@@ -50,6 +50,9 @@ withTypeLookups typeEnv f = do
 
 lookupMutantTyThing tyThing = do
   let name = mutantName . getName $ tyThing
+  lookupTyThingName name
+
+lookupTyThingName name = do
   (env,hpt,pte,dflags) <- ask
   return $ case lookupTypeEnv env name of
              v@(Just _)-> v

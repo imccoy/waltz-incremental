@@ -34,9 +34,11 @@ import Lookups
 import Names
 import Utils
 
-
 mutantId :: Var -> TypeLookupM Var
-mutantId var = mk var' =<< (mutantType $ varType var)
+mutantId = mutantIdO Replicate
+
+mutantIdO replicate_type var = mk var' =<<
+                                 (mutantTypeO replicate_type $ varType var)
   where var' | List.isPrefixOf "$f" (occNameString $ nameOccName $ varName var)
              = mutantClsName (mutantName $ varName var) $ varType var
              | otherwise                                    
@@ -79,68 +81,37 @@ lookupOrMutantId var = do
     Just v    -> return v
     otherwise -> mutantId var
 
---forAllTy forall a. (t -> a) -> [t] -> [a]
---tyConApp *
---appTy (t -> a) -> [t] -> [a]
---appTy [t] -> [a]
---appTy (->) [t]
---tyConApp (->)
---appTy [t]
---tyConApp []
---tyVar t
---appTy (->) (t -> a)
---tyConApp (->)
---appTy t -> a
---appTy (->) t
---tyConApp (->)
---tyVar t
---tyVar a
---appTy [a]
---tyConApp []
---tyVar a
---tyConApp *
--- appTy (appTy (->) (t -> a))
---       ([t] -> [a])
--- appTy (appTy (->) (t -> a))
---       (appTy (appTy (->) [t]) [a])
--- appTy (appTy (->) (appTy (appTy (->) t) a)
---       (appTy (appTy (->) [t]) [a])
-
 tracePpr s t = trace (s ++ " " ++ (showSDoc $ ppr t))
 
+data DoReplicate = Replicate | NoReplicate
+
 mutantType :: Type -> TypeLookupM Type
-mutantType ty@(getTyVar_maybe -> Just tyVar)
+mutantType = mutantTypeO Replicate
+
+mutantTypeO r ty@(getTyVar_maybe -> Just tyVar)
   = liftM mkTyVarTy $ mutantTyVar tyVar
-mutantType ty@(splitArrowAppTy_maybe -> Just (first, rest))
-  -- when we have a function of type (a -> b) -> [a] -> [b], we want to take
-  -- both an incrementalised and non-incrementalised version of the function:
-  -- (a -> b) -> 
-  -- (a_inc -> b_inc) -> 
-  -- List_incrementalised a a_inc ->
-  -- List_incrementalised b b_inc
-  -- this is about matching that (a -> b) case and doing the duplicatey thing.
-  | isArrowAppTy first = do first' <- mutantType first
-                            rest' <- mutantType rest
-                            return $ mkArrow first (mkArrow first' rest')
-  | otherwise = liftM2 mkArrow (mutantType first) (mutantType rest)
-mutantType ty@(splitAppTy_maybe -> Just (a, b))
-  | isPrim a  = liftM2 mkAppTy (mutantType a) (mutantType b)
-  | otherwise = liftM2 mkAppTy (liftM2 mkAppTy (mutantType a) (return b))
-                               (mutantType b)
-  -- not sure if this next one ever happens
-  | isArrowTyConApp a = liftM2 mkAppTy (mutantType a) (mutantType b)
-  where isArrowTyConApp (splitTyConApp_maybe -> Just (con, _)) = isFunTyCon con
-        isArrowTyConApp _                                      = False
-        isPrim a = "#" `List.isSuffixOf` (showSDoc $ ppr a)
+mutantTypeO r ty@(splitArrowAppTy_maybe -> Just (first, rest))
+  -- when we have a function of type a -> b we want to take both incrementalised
+  -- and non-incrementalised versions of the argument: a -> a_inc -> b
+  = do first' <- mutantTypeO r first
+       rest' <- mutantTypeO r rest
+       case r of
+         Replicate -> return $ mkArrow first (mkArrow first' rest')
+         NoReplicate -> return $ mkArrow first' rest'
+mutantTypeO r ty@(splitAppTy_maybe -> Just (a, b))
+  | isPrim a  = liftM2 mkAppTy (mutantTypeO r a) (mutantTypeO r b)
+  | otherwise = liftM2 mkAppTy (liftM2 mkAppTy (mutantTypeO r a) (return b))
+                               (mutantTypeO r b)
+  where isPrim a = "#" `List.isSuffixOf` (showSDoc $ ppr a)
 
-mutantType ty@(splitFunTy_maybe -> Just (a, b))
-  = liftM2 mkFunTy (mutantType a) (mutantType b)
+mutantTypeO r ty@(splitFunTy_maybe -> Just (a, b))
+  = liftM2 mkFunTy (mutantTypeO r a) (mutantTypeO r b)
 
-mutantType ty@(splitTyConApp_maybe -> Just (con, tys))
-  = liftM2 mkTyConApp (lookupMutantTyCon con) (mapM mutantType tys)
+mutantTypeO r ty@(splitTyConApp_maybe -> Just (con, tys))
+  = liftM2 mkTyConApp (lookupMutantTyCon con) (mapM (mutantTypeO r) tys)
 
-mutantType forallty@(splitForAllTy_maybe -> Just (tyVar, ty)) = do
-  ty' <- mutantType ty
+mutantTypeO r forallty@(splitForAllTy_maybe -> Just (tyVar, ty)) = do
+  ty' <- mutantTypeO r ty
   tyVar' <- mutantTyVar tyVar
   incDType <- incrementalisedDictionaryType (mkTyVarTy tyVar) (mkTyVarTy tyVar')
   return $ mkForAllTy tyVar $ mkForAllTy tyVar' (mkFunTy incDType ty')
@@ -170,16 +141,18 @@ mutantTyCon tyCon = do
                                       " :: " ++ (showSDoc.ppr$tyCon))
                                    tyCon
   applicable <- applicableClassBind tyCon mutantAlgTyCon
-  classBinds <- if hasClassBinds
-                  then sequence [incrementalisedClassBind tyCon mutantAlgTyCon
-                                ,return applicable]
-                  else return []
-  instances <- if hasClassBinds
-                  then sequence [tcInstanceApplicable tyCon
-                                                      mutantAlgTyCon
-                                                      applicable]
-                  else return []
-  return (newTyCon, classBinds, instances)
+  let mkClassBinds = sequence [incrementalisedClassBind tyCon mutantAlgTyCon
+                              ,return applicable]
+  let mkInstances = tcInstanceApplicable tyCon
+                                         mutantAlgTyCon
+                                         applicable >>= return . (:[])
+  let mkDataConsMkFuncs' = mkDataConsMkFuncs tyCon newTyCon
+ 
+  (classBinds, dataConsMkFuncs, instances) <- do
+    if hasClassBinds
+      then liftM3 (,,) mkClassBinds mkDataConsMkFuncs' mkInstances
+      else return ([],[],[]) 
+  return (newTyCon, classBinds ++ dataConsMkFuncs, instances)
   where
     name = mutantName $ getName tyCon
     kind = duplicateKindArgs $ tyConKind tyCon
@@ -239,9 +212,9 @@ mutantDataCon dataCon = do
   exTyVars <- mapM mutantTyVar $ dataConExTyVars dataCon
   eqSpec <- map2M mutantTyVar mutantType $ dataConEqSpec dataCon
   wrapper' <- case dataConWrapId_maybe dataCon of
-                          Just m    -> mutantId m >>= return . Just
+                          Just m    -> mutantIdO NoReplicate m >>= return . Just
                           otherwise -> return Nothing
-  worker' <- mutantId $ dataConWorkId dataCon
+  worker' <- mutantIdO NoReplicate $ dataConWorkId dataCon
   let dcIds = DCIds wrapper' worker'
   return $ mkDataCon 
     (mutantName $ dataConName dataCon)
@@ -294,7 +267,7 @@ additionalMutantDataCon newTyCon oldTyCon addConType
                 (additionalMutantDataConName tyConName  addConType)
                 False                       -- is infix?
                 [HsNoBang | _ <- argTypes ] -- strictness annotations
-                []                          -- field lables 
+                []                          -- field labels 
                 (tyConTyVars newTyCon)      -- universally quantified type vars
                 []                          -- existentially quantified type vars
                 []                          -- gadt equalities
@@ -461,8 +434,9 @@ clsOccName space clsName params  = mkOccName space newName
   where
     newName = "$f" ++ clsName ++ 
               concat paramNames'
-    paramNames = map (nameString . getName) params
-    paramNames' = interlace paramNames (map (++"_incrementalised") paramNames)
+    paramNames = map getName params
+    paramNames' = interlace (map nameString paramNames)
+                            (map ((++"_incrementalised") . adaptName) paramNames)
 
 mutantClsName name instanceType
   = sameSortOfName name
@@ -735,6 +709,33 @@ tcInstanceApplicable tyCon mutantTyCon dictbind = do
   let is_flag = NoOverlap
   return $ Instance is_cls is_tcs is_tvs is_tys is_dfun is_flag
 
+mkDataConsMkFuncs :: TyCon -> TyCon -> TypeLookupM [Bind CoreBndr]
+mkDataConsMkFuncs tyCon newTyCon = mapM (mkDataConMkFunc newTyCon)
+                                        (tyConDataCons tyCon)
+
+mkDataConMkFunc mutantTyCon dataCon = do
+  let plainArgTys = dataConOrigArgTys dataCon
+  mutantArgTys <- mapM mutantType plainArgTys
+  let argTys = interlace plainArgTys mutantArgTys
+  let plainArgs = testArgVars (baseName ++ "plain") plainArgTys
+  let mutantArgs = testArgVars (baseName ++ "mutant") mutantArgTys
+  let args = interlace plainArgs mutantArgs
+  let type_ = foldr mkArrow (mkTyConTy $ mutantTyCon) argTys
+  let var = mkExportedLocalVar VanillaId name type_ vanillaIdInfo
+  wrapId <- lookupMutantDataCon dataCon >>= return . dataConWrapId
+  return $ NonRec var $ mkLams args $ mkApps (Var wrapId)
+                                             (map Var mutantArgs)
+  where name = dataConMkFuncName dataCon
+        baseName = occNameString $ nameOccName $ name
+
+dataConMkFuncName dc = mkExternalName (getUnique occName)
+                                      (adaptModule $ nameModule $ dataConName dc)
+                                      occName
+                                      noSrcSpan
+  where occName = mkVarOcc $ "mkIncrementalised" ++
+                             (adaptName $ dataConName dc)
+
+dataConMkFuncId dc = lookupTyThingName $ dataConMkFuncName dc
 
 testArgVars baseName types = zipWith (testArgVar baseName) types [1..]
 testArgVar baseName type_ n = mkLocalVar VanillaId 

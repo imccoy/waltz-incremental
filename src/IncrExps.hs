@@ -5,11 +5,14 @@ module IncrExps where
 import Control.Monad
 import qualified Data.List as List
 import Data.Maybe
+import Safe
 
 
 import GHC (getName)
+import CoreFVs (exprFreeIds)
 import CoreSyn
 import DataCon
+import HscTypes (tyThingId)
 import Id
 import IdInfo (IdDetails (DataConWrapId, DataConWorkId))
 import MkId (realWorldPrimId)
@@ -19,6 +22,7 @@ import Type
 import TysWiredIn
 import Unique (getUnique)
 import Var
+import VarSet (elemVarSet)
 
 
 
@@ -42,7 +46,15 @@ mutantCoreBind corebinds@(Rec name_exps) = do
 mutantCoreBndr = mutantId
 
 mutantExp :: Expr CoreBndr -> TypeLookupM (Expr CoreBndr)
-mutantExp (Var id) = liftM Var $ lookupOrMutantId id
+
+mutantExp (Var id)
+  | (DataConWrapId dc) <- idDetails id = dataCon dc
+  | (DataConWorkId dc) <- idDetails id = dataCon dc
+  | otherwise                          = liftM Var $ lookupOrMutantId id
+  where dataCon dc = dataConMkFuncId dc >>=
+                       return . Var .  tyThingId . fromJustNote ("mutantExp Var "
+                                                                  ++ show id)
+
 
 mutantExp app@(App expr arg)
   = monadGuard [
@@ -62,11 +74,10 @@ mutantExp app@(App expr arg)
          arg' <- mutantExp arg
          argD <- expIncrementalisedDictionary arg
          return $ expr' `App` arg `App` arg' `App` argD)
-     ,(return $ isArrowAppTy $ exprType arg, do
+     ,(return True, do
          expr' <- mutantExp expr
          arg' <- mutantExp arg
-         return $ expr' `App` arg `App` arg')
-     ,(return True              ,liftM2 App (mutantExp expr) (mutantExp arg))]
+         return $ expr' `App` arg `App` arg')]
 -- for \ a -> b, need to check if all args are identity
 -- If so, produce an identity of the result type.
 -- We do a bit of an eta-expand-ish thing here (with additionalVarTys)
@@ -79,7 +90,7 @@ mutantExp c@(Case expr id type_ alts) = liftM4 Case
                                                 (mutantCoreBndr id)
                                                 (mutantType type_)
                                                 (introduceSpecialAltCases c =<<
-                                                 mutantAlts alts)
+                                                 mutantAlts (expr, id) alts)
 mutantExp (Cast expr coercion) = liftM2 Cast
                                          (mutantExp expr)
                                          (mutantType coercion)
@@ -113,14 +124,10 @@ mutantLam expr = do
                              filter (not . isRealWorld . varType . fst) $ 
                                zip allValVars allValVars'
 
-  let includeNonMutantArrowApps vars vars'
-       = concat $ zipWith (\var var' ->
-                             if isArrowAppTy $ varType var
-                               then [var, var']
-                               else [var']) vars vars'
-  let valArgs = includeNonMutantArrowApps allValVars allValVars'
-  let additionalVarsArgs = includeNonMutantArrowApps additionalVars
-                                                     additionalVars'
+  let includeNonMutantApps vars vars' = interlace vars vars'
+  let valArgs = includeNonMutantApps allValVars allValVars'
+  let additionalVarsArgs = includeNonMutantApps additionalVars
+                                                additionalVars'
   finalResultTy' <- mutantType finalResultTy
   valDicts <- forM  valVarsWithMutants $ \(valVar, valVar') -> do
     dictVar <- varIncrementalisedDictionary incrementalisedDictionaryType
@@ -246,25 +253,44 @@ mutantPrimCon expr arg = do let ty = exprType (App expr arg)
  
 
 
-mutantAlts = liftM catMaybes . mapM mutantAlt
+mutantAlts scrutinee = liftM catMaybes . mapM (mutantAlt scrutinee)
 
-mutantAlt :: Alt CoreBndr -> TypeLookupM (Maybe (Alt CoreBndr))
-mutantAlt ((DataAlt dataCon), binds, expr) = do
+mutantAlt :: (Expr CoreBndr, Var) -> Alt CoreBndr -> TypeLookupM (Maybe (Alt CoreBndr))
+mutantAlt scrut alt@((DataAlt dataCon), binds, expr) = do
   dataCon' <- lookupMutantDataCon dataCon
   binds' <- mapM mutantId binds
   expr' <- mutantExp expr
-  return $ Just $ ((DataAlt dataCon'), binds', expr')
-mutantAlt (DEFAULT, [], expr) = do
+  return $ Just $ ((DataAlt dataCon')
+                  , binds'
+                  , originalCaseDestructionBinds (fst scrut)
+                                                 (snd scrut)
+                                                 alt
+                                                 expr')
+mutantAlt scrut (DEFAULT, [], expr) = do
   expr' <- mutantExp expr
   return $ Just (DEFAULT, [], expr')
-mutantAlt _ = return Nothing -- if we handle changes-moving-into-a-value, then
-                             -- we should probably do something  here
+mutantAlt scrut _ = return Nothing -- if we handle changes-moving-into-a-value, then
+                                   -- we should probably do something  here
 
 introduceSpecialAltCases c alts = do
   b <- builderAlts' c
   return $ alts ++ b
 
-
+originalCaseDestructionBinds scr_exp scr_id ((DataAlt dataCon), binds, _) exp
+  = let bindsUsed id = id `elemVarSet` exprFreeIds exp
+        uninc = map (\bind -> (bind, Case scr_exp
+                                          scr_id
+                                          (varType bind)
+                                          [((DataAlt dataCon)
+                                           ,binds
+                                           ,Var bind)])
+                  )
+                  $ filter bindsUsed binds
+     in case uninc of
+          [] -> exp
+          _  -> Let (Rec uninc) exp
+original_case_destruction_binds _ _ _ exp
+  = exp
 
 builderAlts' c@(Case expr id type_ alts)
   = liftM concat $ mapM (builderAlt' c) alts
@@ -300,7 +326,7 @@ builderAlt' c a@(DataAlt dataCon, binds, expr)
 builderAlt' c a = return []
 
 builderAltAtIndex' (Case c_expr c_id c_type c_alts)
-                   (DataAlt dataCon, vars, expr)
+                   alt@(DataAlt dataCon, vars, expr)
                    builderConIndex = do
   type_' <- mutantType type_
   let builderCon = lookupDataConByBuilderIndex type_'
@@ -312,10 +338,11 @@ builderAltAtIndex' (Case c_expr c_id c_type c_alts)
   expr' <- mutantExp expr
   return (DataAlt builderCon
          ,builderArgs
-         ,mkLets ((NonRec replaceVarId replaceVarValue)
-                  :(map (\(id, val) -> NonRec id val)
-                        (zip builderArgsIds builderArgsValues)))
-                 expr')
+         ,originalCaseDestructionBinds c_expr c_id alt $
+                  mkLets ((NonRec replaceVarId replaceVarValue)
+                          :(map (\(id, val) -> NonRec id val)
+                                (zip builderArgsIds builderArgsValues)))
+                         expr')
 
   where type_ = dataConOrigResTy dataCon
         builderArgs = listWithout builderConIndex vars

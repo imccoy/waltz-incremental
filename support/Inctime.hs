@@ -52,11 +52,20 @@ class Monoid_incrementalised base incrementalised where
 
 class (Eq base, Incrementalised base incrementalised) =>
       Eq_incrementalised base incrementalised | incrementalised -> base where
-  eq_incrementalised :: incrementalised -> incrementalised -> Bool_incrementalised
-  eq_incrementalised a b | isIncrementalisedReplace a && isIncrementalisedReplace b
-                         = mkIncrementalisedReplace $ extractReplaceValue a == extractReplaceValue b
-                         | isIncrementalisedIdentity a && isIncrementalisedIdentity b
-                         = Bool_incrementalised_identity
+  eq_incrementalised_wrongcc :: base -> incrementalised -> base -> incrementalised -> Bool_incrementalised
+  eq_incrementalised_wrongcc _ a _ b 
+   | isIncrementalisedReplace a && isIncrementalisedReplace b
+   = mkIncrementalisedReplace $ extractReplaceValue a == extractReplaceValue b
+   | isIncrementalisedIdentity a && isIncrementalisedIdentity b
+   = Bool_incrementalised_identity
+
+eq_incrementalised :: (Incrementalised base incrementalised,
+                        Eq base,
+                        Eq_incrementalised base incrementalised) =>
+                      base -> incrementalised ->
+                      base -> incrementalised ->
+                      Bool_incrementalised
+eq_incrementalised = eq_incrementalised_wrongcc
 
 typeclass_MonoidZLZR_incrementalised = undefined
 
@@ -104,11 +113,23 @@ instance Incrementalised Char Char_incrementalised where
   mkIncrementalisedIdentity = Char_incrementalised_identity
   mkIncrementalisedReplace = Char_incrementalised_replace
 
+instance Eq_incrementalised Char Char_incrementalised where
+  eq_incrementalised_wrongcc _ (Char_incrementalised_replace a) _ (Char_incrementalised_replace b)
+    = case a == b of
+        True -> True_incrementalised
+        False -> False_incrementalised
+  eq_incrementalised_wrongcc _ (Char_incrementalised_identity) _ (Char_incrementalised_identity)
+    = Bool_incrementalised_identity
+  eq_incrementalised_wrongcc _ _ _ _ = error "Difficult eq_incrementalised on Char"
+
 data Bool_incrementalised = False_incrementalised
                           | True_incrementalised
                           | Bool_incrementalised_replace Bool
                           | Bool_incrementalised_identity
   deriving (Show)
+
+mkIncrementalisedFalse = False_incrementalised
+mkIncrementalisedTrue = True_incrementalised
 
 instance Incrementalised Bool Bool_incrementalised where
   isIncrementalisedReplace (Bool_incrementalised_replace _) = True
@@ -153,10 +174,11 @@ instance Num_incrementalised Int Int_incrementalised where
 
 plus_incrementalised
   :: (Incrementalised base incrementalised
+     ,Num base
      ,Num_incrementalised base incrementalised
      ) =>
-     incrementalised -> incrementalised -> incrementalised
-plus_incrementalised = plus_incrementalised_wrongcc
+     base -> incrementalised -> base -> incrementalised -> incrementalised
+plus_incrementalised _ a _ b = plus_incrementalised_wrongcc a b
 
 typeclass_ShowInt_incrementalised = undefined 
 typeclass_ShowInteger_incrementalised = undefined
@@ -187,6 +209,15 @@ data BuiltinList_incrementalised a a_incrementalised =
                                               | BuiltinList_incrementalised_replace [a] -- replace the whole list with the specified value
   deriving (Show)
 
+mkIncrementalisedBuiltinList = BuiltinList_incrementalised
+
+mkIncrementalisedBuiltinListCons :: a ->
+                                    a_incrementalised -> 
+                                    [a] -> 
+                                    BuiltinList_incrementalised a a_incrementalised ->
+                                    BuiltinList_incrementalised a a_incrementalised
+mkIncrementalisedBuiltinListCons _ h _ t = BuiltinListCons_incrementalised h t
+
 instance (ApplicableIncrementalised elem elem_incrementalised) => 
             ApplicableIncrementalised ([elem]) (BuiltinList_incrementalised elem elem_incrementalised) where
   applyInputChange (BuiltinListCons_incrementalised hchange tchange) (h:t) = (applyInputChange hchange h):(applyInputChange tchange t)
@@ -207,6 +238,16 @@ instance (Incrementalised elem elem_incrementalised) =>
   mkIncrementalisedIdentity = BuiltinList_incrementalised_identity
   mkIncrementalisedReplace e = BuiltinList_incrementalised_replace e
 
+instance (Incrementalised elem elem_incrementalised, Eq elem) =>
+            Eq_incrementalised [elem] (BuiltinList_incrementalised elem elem_incrementalised) where
+  eq_incrementalised_wrongcc _ (BuiltinList_incrementalised_replace a) _ (BuiltinList_incrementalised_replace b)
+    = case a == b of
+        True -> True_incrementalised
+        False -> False_incrementalised
+  eq_incrementalised_wrongcc _ (BuiltinList_incrementalised_identity) _ (BuiltinList_incrementalised_identity)
+    = Bool_incrementalised_identity
+  eq_incrementalised_wrongcc _ _ _ _ = error "difficult eq_incrementalised on BuiltinList"
+
 head_incrementalised :: forall base. forall incrementalised.
          Incrementalised [Char] (BuiltinList_incrementalised Char Char_incrementalised)
           => BuiltinList_incrementalised [Char] (BuiltinList_incrementalised Char Char_incrementalised)
@@ -217,16 +258,17 @@ head_incrementalised (BuiltinList_incrementalised_build_using_1 new_head)
 length_incrementalised :: forall a.
                           forall a_inc.
                           Incrementalised a a_inc => 
+                          [a] ->
                           BuiltinList_incrementalised a a_inc -> Int_incrementalised
-length_incrementalised (BuiltinList_incrementalised_replace a)
+length_incrementalised _ (BuiltinList_incrementalised_replace a)
   = Int_incrementalised_replace $ length a
-length_incrementalised (BuiltinList_incrementalised_build_using_1 _)
+length_incrementalised _ (BuiltinList_incrementalised_build_using_1 _)
   = Int_incrementalised_add (Int_incrementalised_replace 1) (Int_incrementalised_identity)
-length_incrementalised (BuiltinList_incrementalised_identity)
+length_incrementalised _ (BuiltinList_incrementalised_identity)
   = Int_incrementalised_identity
-length_incrementalised (BuiltinListCons_incrementalised h_change t_change)
-  = length_incrementalised t_change
-length_incrementalised _ = error "can't do incrementalised length"
+length_incrementalised (_:t) (BuiltinListCons_incrementalised h_change t_change)
+  = length_incrementalised t t_change
+length_incrementalised _ _ = error "can't do incrementalised length"
 
 type String_incrementalised = BuiltinList_incrementalised Char Char_incrementalised
 

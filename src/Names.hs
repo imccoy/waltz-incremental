@@ -48,6 +48,7 @@ adaptName name = adaptName' $ occNameString $ nameOccName name
         adaptName' "[]" = "BuiltinList"
         adaptName' ":" = "BuiltinListCons"
         adaptName' "$" = "apply"
+        adaptName' "==" = "eq"
         adaptName' s 
           | List.isPrefixOf "$c" s = s ++ (show $ getUnique name)
           | otherwise              = s

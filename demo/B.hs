@@ -1,5 +1,5 @@
 module B where
-import Prelude hiding (map, filter, (++))
+import Prelude hiding (map, filter)
 import Inctime
 import InctimeHtml
 
@@ -11,8 +11,8 @@ filter f (x:xs) | f x       = x:(filter f xs)
 map f [] = []
 map f (x:xs) = (f x):(map f xs)
                        
-[] ++ a = a
-(x:xs) ++ a = x:(xs ++ a)
+[] `append` a = a
+(x:xs) `append` a = x:(xs `append` a)
 
 
 
@@ -26,6 +26,7 @@ data AppState = AppState { appStateNumWords :: Int
 
 data Input = NewWordInput String
            | NewDefinitionInput String String
+
 isNewWordInput i = case i of
                      (NewWordInput _) -> True
                      otherwise        -> False
@@ -40,20 +41,23 @@ wordFrom (NewDefinitionInput w _) = w
 inputContainsWord word i = wordFrom i == word
 definitionFrom i = case i of 
                      (NewDefinitionInput _ d) -> d
-                     otherwise                -> error "No definition"
+                     otherwise                -> "NOTADEFINITION" -- should be error, strictly speaking
 
-wordDefinitions (WordDefinitions _ ds) = ds
+definitionsFrom (WordDefinitions _ ds) = ds
+
+wordsFromInputs inputs = map wordFrom (newWordInputs inputs)
+definitionsFromInputsFor w inputs = map definitionFrom (definitionInputsFor w inputs)
+wordDefinitions w inputs = WordDefinitions w (definitionsFromInputsFor w inputs)
 
 app_state inputs
   = AppState { appStateNumWords = length (words inputs)
-             , appStateNumDefinitions = elems_length (map wordDefinitions (definitions inputs))
+             , appStateNumDefinitions = elems_length (map definitionsFrom (definitions inputs))
              , appStateWords = words inputs
              , appStateDefinitions = definitions inputs
              }
-  where words inputs = map wordFrom (newWordInputs inputs)
-        definitions inputs = let f inputs w = word_definitions w inputs
+  where words inputs = wordsFromInputs inputs
+        definitions inputs = let f inputs w = wordDefinitions w inputs
                               in map (f inputs) (words inputs)
-        word_definitions w inputs = WordDefinitions w (map definitionFrom (definitionInputsFor w inputs))
 
 elems_length [] = 0
 elems_length (w:ws) = (length w) + (elems_length ws)
@@ -69,10 +73,10 @@ words_length_stringy = elems_length
 page_view state = domElem "div" [
   domElem "h1" [tElem "The Urbane Dictionary"],
   domElem "p" [
-    tElem ("I'm the urbane dictionary. The definitions are classy, even when" ++
+    tElem ("I'm the urbane dictionary. The definitions are classy, even when" `append`
            "the words are not."),
-    tElemB (IncBox (\x -> show x ++ " words.") (appStateNumWords state)),
-    tElemB (IncBox (\x -> show x ++ " definitions.") (appStateNumDefinitions state))
+    tElemB (IncBox (\x -> show x `append` " words.") (appStateNumWords state)),
+    tElemB (IncBox (\x -> show x `append` " definitions.") (appStateNumDefinitions state))
   ],
   domElem "div" (map (\(WordDefinitions word definitions) ->
                         domElem "div" [
