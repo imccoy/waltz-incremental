@@ -4,6 +4,7 @@ module Main where
 
 import Control.Monad
 import qualified Data.List as List
+import Safe
 import System.Environment (getArgs)
 import System.Exit
 
@@ -63,10 +64,11 @@ mutantModGuts mod mg = do
                             }
                           )
                           instances
+  mg_exports' <- withTypeLookups tyEnv $ mutantAvailInfos (mg_exports mg)
   return $ mg { mg_binds = coreBinds ++ typeclassBinds
                , mg_types = tyEnv
                , mg_dir_imps  = mutantDeps (mg_dir_imps mg) mod
-               , mg_exports = mutantAvailInfos (mg_exports mg)
+               , mg_exports = mg_exports'
                , mg_inst_env = extendInstEnvList (mg_inst_env mg) instances
                , mg_insts = instances
                }
@@ -84,11 +86,17 @@ mutantTypeEnv env = do
 
 mutantDeps imps mod = extendModuleEnv imps mod [(inctimeName, False, noSrcSpan)]
 
-mutantAvailInfos = concatMap mutantAvailInfo
-mutantAvailInfo i@(Avail name) = [i, Avail (mutantName name)]
+mutantAvailInfos = liftM concat . mapM mutantAvailInfo
+mutantAvailInfo i@(Avail name) = return [i, Avail (mutantName name)]
 -- does this one need to include our wacky additional data cons?
-mutantAvailInfo i@(AvailTC name names) = [i, AvailTC (mutantName name)
-                                                     (map mutantName names)]
+mutantAvailInfo i@(AvailTC name names) = do
+   tycon <- lookupTyThingName name >>= return . tyThingTyCon . (fromJustNote $
+                                           "no mutant tycon for exports" ++
+                                               nameString name)
+   tycon' <- lookupMutantTyCon tycon
+   let cons = map dataConName $ tyConDataCons tycon'
+   return [i, AvailTC (mutantName name)
+                      (cons ++ (map mutantName names))]
 
 
 mutantTyThing :: TyThing -> TypeLookupM (TyThing, [CoreBind], [Instance])
