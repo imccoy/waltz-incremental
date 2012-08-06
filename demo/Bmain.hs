@@ -12,20 +12,29 @@ deriving instance Show WordDefinitions_incrementalised
 main = do
   mapM putStrLn tests
 tests =
-  [show $ wordsFromInputs prior
+  ["# wordsFromInputs before and after"
+  ,show $ wordsFromInputs prior
   ,show $ applyInputChange (wordsFromInputs_incrementalised prior change)
                            (wordsFromInputs prior)
+  ,"# newDefinitionInputs before and after"
   ,show $ newDefinitionInputs prior
   ,show $ newDefinitionInputs_incrementalised prior change
+  ,"# definitionInputsFor \"Dog\" before and change"
   ,show $ definitionInputsFor "Dog" prior
   ,show $ definitionInputsFor_incrementalised "Dog" mkIncrementalisedIdentity prior change
+  ,"# definitionsFromInputsFor \"Dog\" before and change"
   ,show $ definitionsFromInputsFor "Dog" prior
   ,show $ definitionsFromInputsFor_incrementalised "Dog" mkIncrementalisedIdentity prior change
-  ,show $ wordDefinitions "Dog" prior
-  ,show $ wordDefinitions_incrementalised "Dog" mkIncrementalisedIdentity prior change
-  ,show $ applyInputChange (wordDefinitions_incrementalised "Dog"
-                                mkIncrementalisedIdentity prior change)
-                           (wordDefinitions "Dog" prior)
+  ,"# wordDefinitions \"Dog\" before, change, and after"
+  ,show $ wordDefinitions prior "Dog"
+  ,show $ wordDefinitions_incrementalised prior change "Dog" mkIncrementalisedIdentity
+  ,show $ applyInputChange (wordDefinitions_incrementalised prior change
+                                "Dog" mkIncrementalisedIdentity)
+                           (wordDefinitions prior "Dog")
+  ,"# definitions before and change"
+  ,show $ definitions prior
+  ,show $ definitions_incrementalised prior change
+  ,"# app_state before and after"
   ,show $ app_state prior
   ,show $ applyInputChange (app_state_incrementalised prior change) 
                            (app_state prior)]

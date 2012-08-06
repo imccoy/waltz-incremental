@@ -75,7 +75,9 @@ unit_incrementalised = ()
 
 id_incrementalised = id
 
--- why are the foralls in this order? Because it seems to work.
+-- I'm not at all sure that the following work.
+
+-- why are the foralls in this order? Because it seems to typecheck.
 compose_incrementalised :: forall b. forall b_inc. (Incrementalised b b_inc) =>
                            forall c. forall c_inc. (Incrementalised c c_inc) =>
                            forall a. forall a_inc. (Incrementalised a a_inc) =>
@@ -88,6 +90,35 @@ apply_incrementalised :: forall a. forall a_inc. (Incrementalised a a_inc) =>
                          (a -> b) -> (a_inc -> b_inc) -> a_inc -> b_inc
 apply_incrementalised f f_inc arg_inc = f_inc arg_inc
 
+
+map_incrementalised :: forall a a_inc. (Incrementalised a a_inc) =>
+                       forall b b_inc. (Incrementalised b b_inc) =>
+                       (a -> b) -> (a -> a_inc -> b_inc) ->
+                       [a] -> (BuiltinList_incrementalised a a_inc) ->
+                       (BuiltinList_incrementalised b b_inc)
+map_incrementalised f f_inc xs (BuiltinList_incrementalised_build_using_1 x) = 
+  BuiltinList_incrementalised_build_using_1 (f x)
+map_incrementalised f f_inc xs (BuiltinList_incrementalised)
+  = BuiltinList_incrementalised -- empty list, do nothing
+map_incrementalised f f_inc (h:t) (BuiltinListCons_incrementalised h_change t_change)
+  = BuiltinListCons_incrementalised (f_inc h h_change)
+                                    (map_incrementalised f f_inc t t_change)
+map_incrementalised f f_inc xs (BuiltinList_incrementalised_identity)
+  = let xs' = map (\a -> f_inc a mkIncrementalisedIdentity) xs
+     in case all isIncrementalisedIdentity xs' of
+          True -> BuiltinList_incrementalised_identity
+          False -> foldr BuiltinListCons_incrementalised
+                         BuiltinList_incrementalised
+                         xs'
+map_incrementalised f f_inc xs (BuiltinList_incrementalised_replace xs') = BuiltinList_incrementalised_replace $ map f xs'
+
+filter_incrementalised :: forall a a_inc. (Incrementalised a a_inc) =>
+                          (a -> Bool) -> (a -> a_inc -> Bool_incrementalised) ->
+                          [a] -> (BuiltinList_incrementalised a a_inc) ->
+                          (BuiltinList_incrementalised a a_inc)
+filter_incrementalised f f_inc xs (BuiltinList_incrementalised_build_using_1 x)
+  | f x = BuiltinList_incrementalised_build_using_1 x
+  | otherwise = BuiltinList_incrementalised_identity
 
 class Num_incrementalised base incrementalised | incrementalised -> base where
   plus_incrementalised_wrongcc :: incrementalised -> incrementalised -> incrementalised

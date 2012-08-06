@@ -1,16 +1,9 @@
 module B where
-import Prelude hiding (map, filter)
+import Prelude
 import Inctime
 import InctimeHtml
 
 
-filter f []                 = []
-filter f (x:xs) | f x       = x:(filter f xs)
-                | otherwise = filter f xs
-
-map f [] = []
-map f (x:xs) = (f x):(map f xs)
-                       
 [] `append` a = a
 (x:xs) `append` a = x:(xs `append` a)
 
@@ -47,17 +40,15 @@ definitionsFrom (WordDefinitions _ ds) = ds
 
 wordsFromInputs inputs = map wordFrom (newWordInputs inputs)
 definitionsFromInputsFor w inputs = map definitionFrom (definitionInputsFor w inputs)
-wordDefinitions w inputs = WordDefinitions w (definitionsFromInputsFor w inputs)
+wordDefinitions inputs w = WordDefinitions w (definitionsFromInputsFor w inputs)
+definitions inputs = map (wordDefinitions inputs) (wordsFromInputs inputs)
 
 app_state inputs
-  = AppState { appStateNumWords = length (words inputs)
+  = AppState { appStateNumWords = length (wordsFromInputs inputs)
              , appStateNumDefinitions = elems_length (map definitionsFrom (definitions inputs))
-             , appStateWords = words inputs
+             , appStateWords = wordsFromInputs inputs
              , appStateDefinitions = definitions inputs
              }
-  where words inputs = wordsFromInputs inputs
-        definitions inputs = let f inputs w = wordDefinitions w inputs
-                              in map (f inputs) (words inputs)
 
 elems_length [] = 0
 elems_length (w:ws) = (length w) + (elems_length ws)
