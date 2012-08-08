@@ -88,7 +88,8 @@ lookupMutantTyCon tyCon
     case tyThing of
       Just (ATyCon tyCon) -> return tyCon
       otherwise           -> error $ "Got not-a-tycon for mutant '" ++ 
-                                     (showSDoc $ ppr tyCon) ++ "'"
+                                     (showSDoc $ ppr tyCon) ++ "'" ++
+                                     (showSDoc $ ppr $ modulePackageId $ nameModule $ getName $ tyCon)
 
 lookupMutantDataCon dataCon = do
   tyThing <- lookupMutantTyThing (ADataCon dataCon)

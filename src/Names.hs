@@ -66,6 +66,8 @@ sameSortOfName oldName occName mod
 adaptModule mod | modulePackageId mod == primPackageId = inctime
                 | modulePackageId mod == rtsPackageId  = inctime
                 | modulePackageId mod == basePackageId = inctime
+                | "containers-" `List.isPrefixOf `packageIdString (modulePackageId mod)
+                                                       = inctime
                 | otherwise                            = mod
 
 

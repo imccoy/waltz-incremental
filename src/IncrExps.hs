@@ -60,24 +60,28 @@ mutantExp app@(App expr arg)
   = monadGuard [
       (return $ isIncBoxApp app ,mutantIncBoxApp app)
      ,(return $ isPrimCon expr  ,mutantPrimCon expr arg)
-     ,(return $ isTypeArg arg && (isRealWorld $ exprType arg), do
-         expr' <- mutantExp expr
-         return $ App expr' arg
-        )
-     ,(return $ isTypeArg arg && isDataConApp expr arg, do
-         expr' <- mutantExp expr
-         arg' <- mutantExp arg
-         return $ App (App expr' arg) arg'
-        )
-     ,(return $ isTypeArg arg, do
-         expr' <- mutantExp expr
-         arg' <- mutantExp arg
-         argD <- expIncrementalisedDictionary arg
-         return $ expr' `App` arg `App` arg' `App` argD)
+     ,(return $ isTypeArg arg   ,mutantTypeApp $ collectTypeArgs app)
      ,(return True, do
          expr' <- mutantExp expr
          arg' <- mutantExp arg
          return $ expr' `App` arg `App` arg')]
+  where
+    mutantTypeApp (exp, args) = do (tyVars, dicts) <- foldM (mutantTypeApp' exp)
+                                                            ([], [])
+                                                            args
+                                   exp' <- mutantExp exp
+                                   return $ mkApps exp' (reverse tyVars ++ reverse dicts)
+    mutantTypeApp' exp (tyVars, dicts) arg = do
+      arg' <- mutantExp arg
+      let tyVars' = if isRealWorld $ exprType arg
+                         then arg:tyVars
+                         else arg':arg:tyVars
+      dict <- expIncrementalisedDictionary arg
+      let dicts' = if isDataConExp exp || isRealWorld (exprType arg)
+                     then dicts
+                     else dict:dicts
+      return (tyVars', dicts')
+
 -- for \ a -> b, need to check if all args are identity
 -- If so, produce an identity of the result type.
 -- We do a bit of an eta-expand-ish thing here (with additionalVarTys)
@@ -108,14 +112,18 @@ mutantLam expr = do
                                                    ty
                                                    n)
                            $ zip additionalVarTys [1..]
-  tyVars' <- liftM concat $ forM tyVars $ \tyVar -> do
-    id' <- lookupOrMutantId tyVar
-    sequence [return tyVar
-             ,return id'
-             ,varIncrementalisedDictionary incrementalisedDictionaryType
-                                           tyVar
-                                           (mkTyVarTy tyVar)
-                                           (mkTyVarTy id')]
+  tyVars' <- do
+    tyVars' <- mapM lookupOrMutantId tyVars
+    dicts <- zipWithM (\tyVar tyVar' -> varIncrementalisedDictionary
+                                            incrementalisedDictionaryType
+                                            tyVar
+                                            (mkTyVarTy tyVar)
+                                            (mkTyVarTy tyVar'))
+                      tyVars
+                      tyVars'
+    return $ (interlace tyVars tyVars') ++ dicts
+ 
+
   valVars' <- mapM lookupOrMutantId valVars
   additionalVars' <- mapM lookupOrMutantId additionalVars
   let allValVars = valVars ++ additionalVars
@@ -356,11 +364,9 @@ builderAltAtIndex' (Case c_expr c_id c_type c_alts)
                                      (typeFor var))
                                   (return $ Var var)
 
-isDataConApp (Var (idDetails -> (DataConWrapId _))) _ = True
-isDataConApp (Var (idDetails -> (DataConWorkId _))) _ = True
-isDataConApp (App exp' arg') (isTypeArg -> True) = isDataConApp exp'
-                                                                arg'
-isDataConApp _ _ = False
+isDataConExp (Var (idDetails -> (DataConWrapId _))) = True
+isDataConExp (Var (idDetails -> (DataConWorkId _))) = True
+isDataConExp _ = False
  
 
 
@@ -381,4 +387,6 @@ isRealWorld (splitTyConApp_maybe -> Just (tyCon, args))
    = getUnique (getName tyCon) == statePrimTyConKey
 isRealWorld _ = False
 
-
+collectTypeArgs expr = go expr []
+  where go (App expr arg@(isTypeArg -> True)) args = go expr (arg:args)
+        go expr                               args = (expr, args)

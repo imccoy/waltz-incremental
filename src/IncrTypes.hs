@@ -110,11 +110,15 @@ mutantTypeO r ty@(splitFunTy_maybe -> Just (a, b))
 mutantTypeO r ty@(splitTyConApp_maybe -> Just (con, tys))
   = liftM2 mkTyConApp (lookupMutantTyCon con) (mapM (mutantTypeO r) tys)
 
-mutantTypeO r forallty@(splitForAllTy_maybe -> Just (tyVar, ty)) = do
+mutantTypeO r forallty@(splitForAllTy_maybe -> Just _) = do
+  let (tyVars, ty) = splitForAllTys forallty
   ty' <- mutantTypeO r ty
-  tyVar' <- mutantTyVar tyVar
-  incDType <- incrementalisedDictionaryType (mkTyVarTy tyVar) (mkTyVarTy tyVar')
-  return $ mkForAllTy tyVar $ mkForAllTy tyVar' (mkFunTy incDType ty')
+  tyVars' <- mapM mutantTyVar tyVars
+  incDTypes <- zipWithM (\tyVar tyVar' -> incrementalisedDictionaryType
+                                            (mkTyVarTy tyVar) (mkTyVarTy tyVar'))
+                        tyVars
+                        tyVars'
+  return $ mkForAllTys (interlace tyVars tyVars') $ mkFunTys incDTypes ty'
 
 mutantTyVar v = do m <- lookupOrMutantId v
                    let k = varType m
@@ -393,9 +397,9 @@ incrementalisedDictionary dictTy dictVal t = do
     argsMutants <- mapM mutantType args
     argsInsts <- mapM (incrementalisedDictionary dictTy dictVal) args
     if includeArgs
-      then return $ interlace3 (map Type args)
-                               (map Type argsMutants)
-                               argsInsts
+      then return $ interlace (map Type args)
+                              (map Type argsMutants)
+                              ++ argsInsts
       else return $ interlace  (map Type args)
                                (map Type argsMutants)
 

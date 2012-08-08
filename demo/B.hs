@@ -1,5 +1,7 @@
 module B where
 import Prelude
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Inctime
 import InctimeHtml
 
@@ -14,7 +16,7 @@ data WordDefinitions = WordDefinitions String [String]
 data AppState = AppState { appStateNumWords :: Int
                          , appStateNumDefinitions :: Int
                          , appStateWords :: [String]
-                         , appStateDefinitions :: [WordDefinitions]
+                         , appStateDefinitions :: MapD String [String]
                          }
 
 data Input = NewWordInput String
@@ -40,12 +42,11 @@ definitionsFrom (WordDefinitions _ ds) = ds
 
 wordsFromInputs inputs = map wordFrom (newWordInputs inputs)
 definitionsFromInputsFor w inputs = map definitionFrom (definitionInputsFor w inputs)
-wordDefinitions inputs w = WordDefinitions w (definitionsFromInputsFor w inputs)
-definitions inputs = map (wordDefinitions inputs) (wordsFromInputs inputs)
+definitions inputs = mapDmapWithKey definitionsFromInputsFor [] (shuffle wordFrom inputs)
 
 app_state inputs
   = AppState { appStateNumWords = length (wordsFromInputs inputs)
-             , appStateNumDefinitions = elems_length (map definitionsFrom (definitions inputs))
+             , appStateNumDefinitions = length (newDefinitionInputs inputs)
              , appStateWords = wordsFromInputs inputs
              , appStateDefinitions = definitions inputs
              }
@@ -61,34 +62,34 @@ words_length_stringy :: [String] -> Int
 words_length_stringy = elems_length
 
 
-page_view state = domElem "div" [
-  domElem "h1" [tElem "The Urbane Dictionary"],
-  domElem "p" [
-    tElem ("I'm the urbane dictionary. The definitions are classy, even when" `append`
-           "the words are not."),
-    tElemB (IncBox (\x -> show x `append` " words.") (appStateNumWords state)),
-    tElemB (IncBox (\x -> show x `append` " definitions.") (appStateNumDefinitions state))
-  ],
-  domElem "div" (map (\(WordDefinitions word definitions) ->
-                        domElem "div" [
-                          tElem word,
-                          domElem "div" (map (\definition ->
-                                                 domElem "div" [
-                                                   tElem definition
-                                                 ]
-                                             ) definitions)
-                        ]
-                     )
-                     (appStateDefinitions state))
-  ,
-  elemA "form" [Attr "method" "post"] [
-    elemA "input" [Attr "name" "word"] [],
-    elemA "input" [Attr "name" "definition"] [],
-    elemA "input" [Attr "name" "action",
-                   Attr "type" "submit",
-                   Attr "value" "Add Definition"] [],
-    elemA "input" [Attr "name" "action", 
-                   Attr "type" "submit",
-                   Attr "value" "Add Word"] []
-  ]
- ]
+--page_view state = domElem "div" [
+--  domElem "h1" [tElem "The Urbane Dictionary"],
+--  domElem "p" [
+--    tElem ("I'm the urbane dictionary. The definitions are classy, even when" `append`
+--           "the words are not."),
+--    tElemB (IncBox (\x -> show x `append` " words.") (appStateNumWords state)),
+--    tElemB (IncBox (\x -> show x `append` " definitions.") (appStateNumDefinitions state))
+--  ],
+--  domElem "div" (map (\(WordDefinitions word definitions) ->
+--                        domElem "div" [
+--                          tElem word,
+--                          domElem "div" (map (\definition ->
+--                                                 domElem "div" [
+--                                                   tElem definition
+--                                                 ]
+--                                             ) definitions)
+--                        ]
+--                     )
+--                     (appStateDefinitions state))
+--  ,
+--  elemA "form" [Attr "method" "post"] [
+--    elemA "input" [Attr "name" "word"] [],
+--    elemA "input" [Attr "name" "definition"] [],
+--    elemA "input" [Attr "name" "action",
+--                   Attr "type" "submit",
+--                   Attr "value" "Add Definition"] [],
+--    elemA "input" [Attr "name" "action", 
+--                   Attr "type" "submit",
+--                   Attr "value" "Add Word"] []
+--  ]
+-- ]

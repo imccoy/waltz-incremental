@@ -115,6 +115,7 @@ process targetFile modName = do
       let dflags_xopts = foldl xopt_set dflags
                                     [ Opt_Cpp
                                     , Opt_ImplicitPrelude
+                                    , Opt_RankNTypes
                                     , Opt_MagicHash]
       let dflags_dopts = foldl dopt_set dflags_xopts
                                     [Opt_EmitExternalCore
