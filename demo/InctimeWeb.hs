@@ -31,6 +31,8 @@ respond404 = return $ responseLBS status404
 
 wrapDom d = domElem "html"
                [domElem "head"
+                 []
+{-
                  [elemA "script" [Attr "src" "rts-common.js"] []
                  ,elemA "script" [Attr "src" "rts-plain.js"] []
                  ,elemA "script" [Attr "src" "http://ajax.googleapis.com/ajax/libs/jquery/1.7.2/jquery.min.js"] []
@@ -40,6 +42,7 @@ wrapDom d = domElem "html"
                  ,elemA "script" [Attr "src" "InctimeUtils.js"] []
                  ,elemA "script" [Attr "src" "InctimeHtml.js"] []
                  ]
+-}
                ,domElem "body"
                  [elemA "div" [Attr "id" "log"] []
                  ,elemA "div" [Attr "id" "inctime-body"] [d]]
@@ -59,21 +62,22 @@ app parse_request state incrementalised_state_function representationFunction re
   request_body_chunks <- (requestBody request) $$ CL.consume
   let request_body_query = stringifyQuery $ parseQuery $ B.concat request_body_chunks
   let maybe_input_change = processRequest parse_request request request_body_query
-  current_state <- liftIO $ readIORef state
+  (inputs, current_state) <- liftIO $ readIORef state
+  let new_inputs = maybe inputs (`applyInputChange` inputs) maybe_input_change
   let new_state = case maybe_input_change of
                     Nothing             -> current_state
-                    (Just input_change) -> let output_change = incrementalised_state_function input_change
+                    (Just input_change) -> let output_change = incrementalised_state_function inputs input_change
                                             in applyInputChange output_change current_state
   let response = responseLBS
               status200
               [("Content-Type", B8.pack "text/html")]
               (LB8.pack $ renderHtml $ wrapDom $ representationFunction new_state)
-  liftIO $ writeIORef state new_state
+  liftIO $ writeIORef state (new_inputs, new_state)
   return response
 
 runApp parse_request initial_state incrementalized_state_function page_view = do
     putStrLn $ "http://localhost:8080/"
-    state <- newIORef initial_state
+    state <- newIORef ([], initial_state)
     run 8080 $ app parse_request state incrementalized_state_function page_view
 
 processRequest parse_request request request_body_query =

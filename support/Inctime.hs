@@ -124,6 +124,8 @@ filter_incrementalised :: forall a a_inc. (Incrementalised a a_inc) =>
 filter_incrementalised f f_inc xs (BuiltinList_incrementalised_build_using_1 x)
   | f x = BuiltinList_incrementalised_build_using_1 x
   | otherwise = BuiltinList_incrementalised_identity
+filter_incrementalised f f_inc xs (BuiltinList_incrementalised_identity)
+  = BuiltinList_incrementalised_identity
 
 class Num_incrementalised base incrementalised | incrementalised -> base where
   plus_incrementalised_wrongcc :: incrementalised -> incrementalised -> incrementalised
@@ -330,7 +332,9 @@ mapDlookup k (MapD m d) = case Map.lookup k m of
 mapDalter f k (MapD m d) = MapD (Map.alter f' k m) d
   where f' Nothing  = Just $ f d
         f' (Just a) = Just $ f a
-mapDmapWithKey f d1 (MapD m d0) = MapD (Map.mapWithKey f m) d1
+mapDmapWithKey f (MapD m d0) = MapD (Map.mapWithKey f m)
+                                     (f (error "default has no key") d0)
+mapDkeys (MapD m _) = Map.keys m
 
 instance (Show k, Show v) => Show (MapD k v) where
   show (MapD m d) = show m
@@ -383,12 +387,33 @@ mapDmapWithKey_incrementalised :: forall k k_inc v1 v1_inc v2 v2_inc.
                                     Incrementalised v2 v2_inc) =>
                                   (k -> v1 -> v2) ->
                                   (k -> k_inc -> v1 -> v1_inc -> v2_inc) ->
-                                  v2 ->
-                                  v2_inc ->
                                   MapD k v1 ->
                                   MapD_incrementalised k k_inc v1 v1_inc ->
                                   MapD_incrementalised k k_inc v2 v2_inc
-mapDmapWithKey_incrementalised f f_inc d d_inc m (MapD_incrementalised_atkey k change)
+mapDmapWithKey_incrementalised f f_inc m (MapD_incrementalised_atkey k change)
   = let v0 = mapDlookup k m
         c1 = f_inc k mkIncrementalisedIdentity v0 change
      in MapD_incrementalised_atkey k c1
+
+mapDkeys_incrementalised :: forall k k_inc v v_inc.
+                              (Incrementalised k k_inc,
+                               Incrementalised v v_inc) =>
+                              MapD k v ->
+                              MapD_incrementalised k k_inc v v_inc ->
+                              BuiltinList_incrementalised k k_inc
+mapDkeys_incrementalised (MapD m _) (MapD_incrementalised_atkey k _)
+  = case Map.lookup k m of
+      Just a -> mkIncrementalisedIdentity
+      Nothing -> BuiltinList_incrementalised_build_using_1 k
+
+mapDlookup_incrementalised :: forall k k_inc v v_inc.
+                              (Incrementalised k k_inc,
+                               Incrementalised v v_inc) =>
+                              k -> k_inc ->
+                              MapD k v ->
+                              MapD_incrementalised k k_inc v v_inc ->
+                              v_inc
+mapDlookup_incrementalised k k_inc (MapD _ _) (MapD_incrementalised_atkey k' c)
+ | k == k'   = c
+ | otherwise = mkIncrementalisedIdentity
+ 

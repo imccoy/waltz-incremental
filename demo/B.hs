@@ -42,7 +42,7 @@ definitionsFrom (WordDefinitions _ ds) = ds
 
 wordsFromInputs inputs = map wordFrom (newWordInputs inputs)
 definitionsFromInputsFor w inputs = map definitionFrom (definitionInputsFor w inputs)
-definitions inputs = mapDmapWithKey definitionsFromInputsFor [] (shuffle wordFrom inputs)
+definitions inputs = mapDmapWithKey definitionsFromInputsFor (shuffle wordFrom inputs)
 
 app_state inputs
   = AppState { appStateNumWords = length (wordsFromInputs inputs)
@@ -51,45 +51,43 @@ app_state inputs
              , appStateDefinitions = definitions inputs
              }
 
-elems_length [] = 0
-elems_length (w:ws) = (length w) + (elems_length ws)
-
--- if we call words_length_incrementalised directly from un-incrementalised
--- code, we run into trouble because we can't pass the typeclass argument. By
--- calling a specialised version, the machinery generates code to pick the
--- relevant typeclass argument.
-words_length_stringy :: [String] -> Int
-words_length_stringy = elems_length
-
-
---page_view state = domElem "div" [
---  domElem "h1" [tElem "The Urbane Dictionary"],
---  domElem "p" [
---    tElem ("I'm the urbane dictionary. The definitions are classy, even when" `append`
---           "the words are not."),
---    tElemB (IncBox (\x -> show x `append` " words.") (appStateNumWords state)),
---    tElemB (IncBox (\x -> show x `append` " definitions.") (appStateNumDefinitions state))
---  ],
---  domElem "div" (map (\(WordDefinitions word definitions) ->
---                        domElem "div" [
---                          tElem word,
---                          domElem "div" (map (\definition ->
---                                                 domElem "div" [
---                                                   tElem definition
---                                                 ]
---                                             ) definitions)
---                        ]
---                     )
---                     (appStateDefinitions state))
---  ,
---  elemA "form" [Attr "method" "post"] [
---    elemA "input" [Attr "name" "word"] [],
---    elemA "input" [Attr "name" "definition"] [],
---    elemA "input" [Attr "name" "action",
---                   Attr "type" "submit",
---                   Attr "value" "Add Definition"] [],
---    elemA "input" [Attr "name" "action", 
---                   Attr "type" "submit",
---                   Attr "value" "Add Word"] []
---  ]
--- ]
+page_view state = domElem "div" [
+  domElem "h1" [tElem "The Urbane Dictionary"],
+  domElem "p" [
+    tElem ("I'm the urbane dictionary. The definitions are classy, even when " `append`
+           "the words are not."),
+    domElem "div" [
+      tElemB (IncBox (\x -> show x `append` " words.") (appStateNumWords state))
+    ],
+    domElem "div" [
+      tElemB (IncBox (\x -> show x `append` " definitions.") (appStateNumDefinitions state))
+    ]
+  ],
+  domElem "div" (map (\word ->
+                        domElem "div" [
+                          tElem word,
+                          domElem "div" [
+                            domElem "ul" (map (\definition ->
+                                                   domElem "li" [
+                                                     tElem definition
+                                                   ]
+                                               )
+                                               (mapDlookup word
+                                                           (appStateDefinitions state)
+                                               ))
+                           ]
+                        ]
+                     )
+                     (mapDkeys (appStateDefinitions state)))
+  ,
+  elemA "form" [Attr "method" "post"] [
+    elemA "input" [Attr "name" "word"] [],
+    elemA "input" [Attr "name" "definition"] [],
+    elemA "input" [Attr "name" "action",
+                   Attr "type" "submit",
+                   Attr "value" "Add Definition"] [],
+    elemA "input" [Attr "name" "action", 
+                   Attr "type" "submit",
+                   Attr "value" "Add Word"] []
+  ]
+ ]
