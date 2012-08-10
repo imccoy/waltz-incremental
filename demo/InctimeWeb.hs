@@ -49,6 +49,14 @@ wrapDom d = domElem "html"
                ]
 
 
+app :: (ApplicableIncrementalised i i_inc,
+         ApplicableIncrementalised s s_inc) =>
+       ([(String, Maybe String)] -> (BuiltinList_incrementalised i i_inc)) ->
+       (IORef ([i], s)) ->
+       ([i] -> (BuiltinList_incrementalised i i_inc) -> s_inc) ->
+       (s -> Dom) ->
+       Request ->
+       ResourceT IO Response
 app parse_request state incrementalised_state_function representationFunction request
   | (length $ pathInfo request) > 0 &&
     ".js" `isSuffixOf` (T.unpack $ last $ pathInfo request) = do
@@ -66,7 +74,7 @@ app parse_request state incrementalised_state_function representationFunction re
   let new_inputs = maybe inputs (`applyInputChange` inputs) maybe_input_change
   let new_state = case maybe_input_change of
                     Nothing             -> current_state
-                    (Just input_change) -> let output_change = incrementalised_state_function inputs input_change
+                    (Just input_change) -> let output_change = incrementalised_state_function (error "never tickle a sleeping dragon" :: [i]) input_change
                                             in applyInputChange output_change current_state
   let response = responseLBS
               status200

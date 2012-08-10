@@ -64,7 +64,11 @@ mutantModGuts mod mg = do
                             }
                           )
                           instances
-  mg_exports' <- withTypeLookups tyEnv $ mutantAvailInfos (mg_exports mg)
+  mg_exports' <- (withTypeLookups tyEnv $ mutantAvailInfos (mg_exports mg)) >>=
+                   (return . (++) (concatMap
+                                      (\n -> [Avail n, AvailTC n [n]]) $
+                                           map (varName . fst) $
+                                             flattenBinds typeclassBinds))
   return $ mg { mg_binds = coreBinds ++ typeclassBinds
                , mg_types = tyEnv
                , mg_dir_imps  = mutantDeps (mg_dir_imps mg) mod

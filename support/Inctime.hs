@@ -105,16 +105,23 @@ map_incrementalised f f_inc xs (BuiltinList_incrementalised_build_using_1 x) =
   BuiltinList_incrementalised_build_using_1 (f x)
 map_incrementalised f f_inc xs (BuiltinList_incrementalised)
   = BuiltinList_incrementalised -- empty list, do nothing
-map_incrementalised f f_inc (h:t) (BuiltinListCons_incrementalised h_change t_change)
-  = BuiltinListCons_incrementalised (f_inc h h_change)
-                                    (map_incrementalised f f_inc t t_change)
+map_incrementalised f f_inc xs (BuiltinListCons_incrementalised h_change t_change)
+  = case xs of -- we need to delay this until after matching
+               -- BuiltinListCons_incrementalised because otherwise
+               -- we pull on the xs list too soon. xs may be unavailable, in
+               -- which case this causes catastrophic failure.
+      h:t -> BuiltinListCons_incrementalised (f_inc h h_change)
+                                             (map_incrementalised f f_inc t t_change)
 map_incrementalised f f_inc xs (BuiltinList_incrementalised_identity)
+  = BuiltinList_incrementalised_identity
+{-
   = let xs' = map (\a -> f_inc a mkIncrementalisedIdentity) xs
      in case all isIncrementalisedIdentity xs' of
           True -> BuiltinList_incrementalised_identity
           False -> foldr BuiltinListCons_incrementalised
                          BuiltinList_incrementalised
                          xs'
+-}
 map_incrementalised f f_inc xs (BuiltinList_incrementalised_replace xs') = BuiltinList_incrementalised_replace $ map f xs'
 
 filter_incrementalised :: forall a a_inc. (Incrementalised a a_inc) =>
@@ -343,6 +350,7 @@ data MapD_incrementalised k k_inc v v_inc
    = MapD_incrementalised_atkey k v_inc
    | MapD_incrementalised_identity
    | MapD_incrementalised_replace (MapD k v)
+  deriving (Show)
 
 instance forall k k_inc v v_inc. 
          ((Incrementalised k k_inc), (Incrementalised v v_inc)) =>

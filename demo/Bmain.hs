@@ -4,6 +4,7 @@ import B
 import Inctime
 
 deriving instance Show AppState
+deriving instance Show AppState_incrementalised
 deriving instance Show Input
 deriving instance Show Input_incrementalised
 deriving instance Show WordDefinitions

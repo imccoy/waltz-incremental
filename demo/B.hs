@@ -45,7 +45,7 @@ definitionsFromInputsFor w inputs = map definitionFrom (definitionInputsFor w in
 definitions inputs = mapDmapWithKey definitionsFromInputsFor (shuffle wordFrom inputs)
 
 app_state inputs
-  = AppState { appStateNumWords = length (wordsFromInputs inputs)
+  = AppState { appStateNumWords = length (newWordInputs inputs)
              , appStateNumDefinitions = length (newDefinitionInputs inputs)
              , appStateWords = wordsFromInputs inputs
              , appStateDefinitions = definitions inputs
@@ -78,7 +78,7 @@ page_view state = domElem "div" [
                            ]
                         ]
                      )
-                     (mapDkeys (appStateDefinitions state)))
+                     (appStateWords state))
   ,
   elemA "form" [Attr "method" "post"] [
     elemA "input" [Attr "name" "word"] [],
