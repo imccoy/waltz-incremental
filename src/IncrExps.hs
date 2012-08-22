@@ -15,11 +15,11 @@ import DataCon
 import HscTypes (tyThingId)
 import Id
 import IdInfo (IdDetails (DataConWrapId, DataConWorkId))
+import MkCore (mkListExpr)
 import MkId (realWorldPrimId)
 import Outputable
 import PrelNames (statePrimTyConKey)
 import Type
-import TysWiredIn
 import Unique (getUnique)
 import Var
 import VarSet (elemVarSet)
@@ -145,78 +145,60 @@ mutantLam expr = do
     dictVal <- expIncrementalisedDictionary (Type $ varType valVar)
     return $ NonRec dictVar dictVal
 
-  let scrutinee ts
-       = do tests <- forM valVarsWithMutants $ \(valVar, valVar') -> do
-              dict <- varIncrementalisedDictionary incrementalisedDictionaryType
-                                                   valVar
-                                                   (typeFor valVar)
-                                                   (typeFor valVar')
-              return $ mkApps (Var ts) [ Type (varType valVar)
-                                       , Type (varType valVar')
-                                       , Var dict
-                                       , Var valVar']
-
-            and <- lookupPreludeFn "" "&&"
-            return $ foldl (\a b -> mkApps (Var and) [a,b]) 
-                           (Var $ dataConWrapId trueDataCon)
-                           tests
-  identityScrutinee <- scrutinee =<< incrementalisedIdentityTest
-  replacementScrutinee <- scrutinee =<< incrementalisedReplaceTest
-
   exprRemaining' <- mutantExp exprRemaining
-
-  mkIdentity <- do
-    mk <- incrementalisedIdentityMk
-    dict <- expIncrementalisedDictionary $ Type $ finalResultTy
-    return $ mkApps (Var mk) [ Type finalResultTy
-                             , Type finalResultTy'
-                             , dict]
-  mkReplace <- do
-    mk <- incrementalisedReplaceMk
-    extract <- incrementalisedReplaceExtractor
-    dict <- expIncrementalisedDictionary $ Type $ finalResultTy
-    let arg (valVar, valVar')
-         | isArrowAppTy $ varType valVar = return $ Var valVar
-         | isRealWorld (varType valVar) = return $ Var realWorldPrimId
-         | otherwise
-         = do varDict <- expIncrementalisedDictionary (Type $ varType valVar)
-              return $ mkApps (Var extract)
-                             [Type $ varType valVar
-                             ,Type $ varType valVar'
-                             ,varDict
-                             ,Var valVar']
-    args <- mapM arg (zip allValVars allValVars')
-
-          
-    let appExpr = mkApps expr $ map (Type . mkTyVarTy) tyVars ++ args
-    return $ mkApps (Var mk) [ Type finalResultTy
-                             , Type finalResultTy'
-                             , dict
-                             , appExpr]
-
 
   let identityAndReplacementTestExpr innerExpr
         | valVarsWithMutants == []
-        = innerExpr
+        = return innerExpr
         | otherwise
-        = Case identityScrutinee
-               (testArgVar suffix boolTy 0)
-               finalResultTy'
-               [(DataAlt falseDataCon
-                ,[]
-                ,Case replacementScrutinee
-                      (testArgVar suffix boolTy 1)
-                      finalResultTy'
-                      [(DataAlt falseDataCon
-                       ,[]
-                       ,innerExpr)
-                      ,(DataAlt trueDataCon, [], mkReplace)])
-               ,(DataAlt trueDataCon, [], mkIdentity)]
+        = do
+            dict <- expIncrementalisedDictionary $ Type $ finalResultTy
+            allIdentityOrReplaceF <- allIdentityOrReplaceFn
+            incrementalisedThingT <- incrementalisedThingTy
+            incrementalisedThingD <- incrementalisedThingDataCon
+            let incThings = mkListExpr incrementalisedThingT $
+                              map (\(valVar, valVar', dict) ->
+                                     mkApps (Var $ dataConWrapId
+                                                       incrementalisedThingD)
+                                            [Type $ varType valVar
+                                            ,Type $ varType valVar'
+                                            ,Var $ head $ bindersOf dict
+                                            ,Var valVar'
+                                            ]
+                                  )
+                                  (zip3 allValVars allValVars' valDicts)
+            replace <- do
+              extract <- incrementalisedReplaceExtractor
+              let arg (valVar, valVar')
+                   | isArrowAppTy $ varType valVar = return $ Var valVar
+                   | isRealWorld (varType valVar) = return $ Var realWorldPrimId
+                   | otherwise
+                   = do varDict <- expIncrementalisedDictionary (Type $ varType valVar)
+                        return $ mkApps (Var extract)
+                                       [Type $ varType valVar
+                                       ,Type $ varType valVar'
+                                       ,varDict
+                                       ,Var valVar']
+              args <- mapM arg (zip allValVars allValVars')
+              
+                    
+              return $ mkApps expr $ map (Type . mkTyVarTy) tyVars ++ args
+              
+            return $ mkApps (Var allIdentityOrReplaceF)
+                            [Type finalResultTy
+                            ,Type finalResultTy'
+                            ,dict
+                            ,incThings
+                            ,replace
+                            ,innerExpr
+                            ]
 
+  body <- identityAndReplacementTestExpr $
+            mkApps exprRemaining' (map Var additionalVarsArgs)
+            
   return $ mkLams (tyVars' ++ valArgs) $ 
              mkLets valDicts $
-               identityAndReplacementTestExpr $
-                 mkApps exprRemaining' (map Var additionalVarsArgs)
+               body
   
 isIncBoxApp exp = isJust $ splitBoxApp_maybe exp
 splitBoxApp = fromJust . splitBoxApp_maybe

@@ -213,6 +213,28 @@ incrementalisedReplaceMk
                                    "mkIncrementalisedReplace"
                                    OccName.varName
 
+allIdentityOrReplaceFn :: TypeLookupM Var
+allIdentityOrReplaceFn
+  = lookupAndConvertInctimeTyThing tyThingId
+                                   "allIdentityOrReplaceFn"
+                                   "allIdentityOrReplace"
+                                   OccName.varName
+
+incrementalisedThingTyCon :: TypeLookupM TyCon
+incrementalisedThingTyCon
+  = lookupAndConvertInctimeTyThing tyThingTyCon
+                                   "incrementalisedThingTyCon"
+                                   "IncrementalisedThing"
+                                   OccName.tcName
+
+incrementalisedThingTy = incrementalisedThingTyCon >>= return . mkTyConTy
+
+incrementalisedThingDataCon :: TypeLookupM DataCon
+incrementalisedThingDataCon
+  = lookupAndConvertInctimeTyThing tyThingDataCon
+                                   "incrementalisedThingDataCon"
+                                   "IncrementalisedThing"
+                                   OccName.dataName
 
 incrementalisedReplaceExtractor :: TypeLookupM Var
 incrementalisedReplaceExtractor

@@ -38,7 +38,29 @@ instance ApplicableIncrementalised (IncBox b)
   applyInputChange (IncBox_incrementalised f v') (IncBox _ v)
     = IncBox f $ applyInputChange v' (unsafeCoerce v)
 
+data IncrementalisedThing = forall base incrementalised.
+                              (Incrementalised base incrementalised) =>
+                              IncrementalisedThing incrementalised
 
+isIncrementalisedIdentityThing (IncrementalisedThing a)
+  = isIncrementalisedIdentity a
+
+isIncrementalisedReplaceThing (IncrementalisedThing a)
+  = isIncrementalisedReplace a
+
+allIdentityOrReplace :: forall base incrementalised.
+                        Incrementalised base incrementalised =>
+                        [IncrementalisedThing] ->
+                        base -> -- replacement case
+                        incrementalised -> -- regular incrementalise case
+                        incrementalised
+allIdentityOrReplace incThings replace def
+  | all isIncrementalisedIdentityThing incThings
+  = mkIncrementalisedIdentity
+  | all isIncrementalisedReplaceThing incThings
+  = mkIncrementalisedReplace replace
+  | otherwise
+  = def
 
 
 
