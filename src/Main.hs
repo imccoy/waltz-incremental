@@ -4,7 +4,6 @@ module Main where
 
 import Control.Monad
 import qualified Data.List as List
-import Safe
 import System.Environment (getArgs)
 import System.Exit
 
@@ -13,16 +12,12 @@ import Bag
 import GHC.Paths ( libdir )
 import CoreLint
 import CoreMonad
-import CoreSyn
 import DataCon
 import DynFlags
 import ErrUtils
 import HscTypes hiding (lookupDataCon, lookupType)
 import HscMain
-import IfaceSyn (IfaceInst (..))
-import IfaceType (toIfaceTyCon_name)
-import InstEnv (extendInstEnvList,
-                is_cls, is_dfun, is_tys, is_tcs, is_tvs, is_flag)
+import InstEnv (is_cls, is_dfun, is_tys, is_tcs, is_tvs)
 import Module
 import Outputable
 import UniqFM
@@ -39,77 +34,27 @@ import Javascript.Language (Javascript)
 import qualified Javascript.Formatted as Js
 
 import Lookups
+import Modify
 import Names
 import IncrExps
 import IncrTypes
 import Tracer
 
-mutantCoreModule mod dm = do
-  coreMod <- mutantModGuts mod (dm_core_module dm)
-  return $ dm { dm_core_module = coreMod }
+import Dbise
 
-mutantModGuts mod mg = do
-  (tyEnv, typeclassBinds, instances) <- mutantTypeEnv (mg_types mg)
-  coreBinds <- withTypeLookups tyEnv $ mutantCoreBinds (mg_binds mg)
-  let newIfaceInsts = map (\inst -> IfaceInst {
-                              ifDFun = varName $ is_dfun inst
-                             ,ifOFlag = is_flag inst
-                             ,ifInstCls = is_cls inst
-                             ,ifInstTys = map (fmap toIfaceTyCon_name)
-                                              (is_tcs inst)
-                             ,ifInstOrph = Nothing -- should be safe, since all
-                                                   -- instances we generate are
-                                                   -- for types defined in this
-                                                   -- module
-                            }
-                          )
-                          instances
-  mg_exports' <- (withTypeLookups tyEnv $ mutantAvailInfos (mg_exports mg)) >>=
-                   (return . (++) (concatMap
-                                      (\n -> [Avail n, AvailTC n [n]]) $
-                                           map (varName . fst) $
-                                             flattenBinds typeclassBinds))
-  return $ mg { mg_binds = coreBinds ++ typeclassBinds
-               , mg_types = tyEnv
-               , mg_dir_imps  = mutantDeps (mg_dir_imps mg) mod
-               , mg_exports = mg_exports'
-               , mg_inst_env = extendInstEnvList (mg_inst_env mg) instances
-               , mg_insts = instances
-               }
-
-mutantTypeEnv env = do
-  rec { (result, classBinds, instances) <- withTypeLookups result $ do
-          elt_classBinds_instances <- mapM mutantTyThing $ typeEnvElts env
-          let elts       = map       (\(a,_,_) -> a) elt_classBinds_instances
-          let classBinds = concatMap (\(_,b,_) -> b) elt_classBinds_instances
-          let instances  = concatMap (\(_,_,c) -> c) elt_classBinds_instances
-          let newElts = elts ++ map AnId (bindersOfBinds classBinds)
-          return (extendTypeEnvList env newElts, classBinds, instances)
-      }
-  return (result, classBinds, instances)
-
-mutantDeps imps mod = extendModuleEnv imps mod [(inctimeName, False, noSrcSpan)]
-
-mutantAvailInfos = liftM concat . mapM mutantAvailInfo
-mutantAvailInfo i@(Avail name) = return [i, Avail (mutantName name)]
--- does this one need to include our wacky additional data cons?
-mutantAvailInfo i@(AvailTC name names) = do
-   tycon <- lookupTyThingName name >>= return . tyThingTyCon . (fromJustNote $
-                                           "no mutant tycon for exports" ++
-                                               nameString name)
-   tycon' <- lookupMutantTyCon tycon
-   let cons = map dataConName $ tyConDataCons tycon'
-   return [i, AvailTC (mutantName name)
-                      (cons ++ (map mutantName names))]
-
-
-mutantTyThing :: TyThing -> TypeLookupM (TyThing, [CoreBind], [Instance])
-mutantTyThing (AnId id) = mutantId id >>= return . (,[],[]) . AnId
-mutantTyThing (ADataCon con) = mutantDataCon con 
-                                 >>= return . (,[],[]) . ADataCon
-mutantTyThing (ATyCon con) = mutantTyCon con
-                                 >>= return . (\(c,bs,is) -> (ATyCon c, bs, is))
-mutantTyThing (AClass cls) = return $ (AClass $ mutantClass cls, [],[])
+mutantCoreModule = modifyCoreModule $ ModifyFuncs {
+  modifyCoreBinds = mutantCoreBinds,
+  modifyName = mutantName,
+  --lookupmodifyTyCon :: TyCon -> TypeLookupM TyCon
+  --lookupmodifyTyCon tyCon
+  --   = lookupTyThingName (tyConName tyCon) >>=
+  --                         return . tyThingTyCon . fromJustNote "lookupmodifyTyCon"
+  modifyLookupTyCon = lookupMutantTyCon,
+  modifyId = mutantId,
+  modifyDataCon = mutantDataCon,
+  modifyTyCon = mutantTyCon,
+  modifyClass = mutantClass
+}
 
 process targetFile modName = do
   --addWay WayProf
@@ -140,8 +85,9 @@ process targetFile modName = do
       p <- parseModule modSum
       t <- typecheckModule p
       d <- desugarModule t
-      d' <- mutantCoreModule (ms_mod modSum) (verifySingularVarDecsCoreModule d)
+      d1 <- mutantCoreModule (ms_mod modSum) (verifySingularVarDecsCoreModule d)
                  -- >>= traceCoreModuleG
+      d' <- dbiseCoreModule (ms_mod modSum) d1
       liftIO $ do
         showAllModuleContents $ mg_types $ dm_core_module $ d'
         putStrLn $ showSDoc $ ppr $ mg_binds $ dm_core_module d'
