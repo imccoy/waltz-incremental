@@ -21,7 +21,7 @@ import Type
 import UniqFM
 import Var
 
-import Names (mutantName)
+import Names (incrementaliseName)
 
 
 
@@ -49,7 +49,7 @@ withTypeLookups typeEnv f = do
   return $ runReader f (typeEnv, hpt, eps_PTE eps, dynflags)
 
 lookupMutantTyThing tyThing = do
-  let name = mutantName . getName $ tyThing
+  let name = incrementaliseName . getName $ tyThing
   lookupTyThingName name
 
 lookupTyThingName name = do
@@ -276,6 +276,12 @@ noIncAppId
                                    "noIncApp"
                                    OccName.varName
 
+dbRefTyCon :: TypeLookupM TyCon
+dbRefTyCon
+  = lookupAndConvertInctimeTyThing tyThingTyCon
+                                   "dbRefTyCon"
+                                   "DbRef"
+                                   OccName.tcName
 
 
 lookupPreludeFn :: String -> String -> TypeLookupM Var

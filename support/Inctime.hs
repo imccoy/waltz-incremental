@@ -14,6 +14,8 @@ import GHC.Prim
 import Data.Data
 import Unsafe.Coerce (unsafeCoerce)
 
+import Data.IORef
+
 
 class Incrementalised base incrementalised | incrementalised -> base where
   isIncrementalisedReplace :: incrementalised -> Bool
@@ -447,3 +449,15 @@ mapDlookup_incrementalised k k_inc (MapD _ _) (MapD_incrementalised_atkey k' c)
  | k == k'   = c
  | otherwise = mkIncrementalisedIdentity
  
+
+data DbRef a = DbRef { dbRefGetter :: IO a,
+                       dbRefValue :: IORef (Maybe a)
+                     }
+
+dbGetRef :: forall a. DbRef a -> IO a
+dbGetRef ref = do value <- readIORef $ dbRefValue ref
+                  case value of
+                    Just v -> return v
+                    Nothing -> do v <- dbRefGetter ref
+                                  writeIORef (dbRefValue ref) (Just v)
+                                  return v

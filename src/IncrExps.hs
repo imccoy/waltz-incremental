@@ -29,6 +29,7 @@ import VarSet (elemVarSet)
 import AdditionalDataCons
 import Lookups
 import IncrTypes
+import TypeUtils
 import Tracer
 import Utils
 

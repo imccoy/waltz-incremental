@@ -3,7 +3,7 @@ import Prelude
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Inctime
-import InctimeHtml
+--import InctimeHtml
 
 
 [] `append` a = a
@@ -51,43 +51,43 @@ app_state inputs
              , appStateDefinitions = definitions inputs
              }
 
-page_view state = domElem "div" [
-  domElem "h1" [tElem "The Urbane Dictionary"],
-  domElem "p" [
-    tElem ("I'm the urbane dictionary. The definitions are classy, even when " `append`
-           "the words are not."),
-    domElem "div" [
-      tElemB (IncBox (\x -> show x `append` " words.") (appStateNumWords state))
-    ],
-    domElem "div" [
-      tElemB (IncBox (\x -> show x `append` " definitions.") (appStateNumDefinitions state))
-    ]
-  ],
-  domElem "div" (map (\word ->
-                        domElem "div" [
-                          tElem word,
-                          domElem "div" [
-                            domElem "ul" (map (\definition ->
-                                                   domElem "li" [
-                                                     tElem definition
-                                                   ]
-                                               )
-                                               (mapDlookup word
-                                                           (appStateDefinitions state)
-                                               ))
-                           ]
-                        ]
-                     )
-                     (appStateWords state))
-  ,
-  elemA "form" [Attr "method" "post"] [
-    elemA "input" [Attr "name" "word"] [],
-    elemA "input" [Attr "name" "definition"] [],
-    elemA "input" [Attr "name" "action",
-                   Attr "type" "submit",
-                   Attr "value" "Add Definition"] [],
-    elemA "input" [Attr "name" "action", 
-                   Attr "type" "submit",
-                   Attr "value" "Add Word"] []
-  ]
- ]
+--page_view state = domElem "div" [
+--  domElem "h1" [tElem "The Urbane Dictionary"],
+--  domElem "p" [
+--    tElem ("I'm the urbane dictionary. The definitions are classy, even when " `append`
+--           "the words are not."),
+--    domElem "div" [
+--      tElemB (IncBox (\x -> show x `append` " words.") (appStateNumWords state))
+--    ],
+--    domElem "div" [
+--      tElemB (IncBox (\x -> show x `append` " definitions.") (appStateNumDefinitions state))
+--    ]
+--  ],
+--  domElem "div" (map (\word ->
+--                        domElem "div" [
+--                          tElem word,
+--                          domElem "div" [
+--                            domElem "ul" (map (\definition ->
+--                                                   domElem "li" [
+--                                                     tElem definition
+--                                                   ]
+--                                               )
+--                                               (mapDlookup word
+--                                                           (appStateDefinitions state)
+--                                               ))
+--                           ]
+--                        ]
+--                     )
+--                     (appStateWords state))
+--  ,
+--  elemA "form" [Attr "method" "post"] [
+--    elemA "input" [Attr "name" "word"] [],
+--    elemA "input" [Attr "name" "definition"] [],
+--    elemA "input" [Attr "name" "action",
+--                   Attr "type" "submit",
+--                   Attr "value" "Add Definition"] [],
+--    elemA "input" [Attr "name" "action", 
+--                   Attr "type" "submit",
+--                   Attr "value" "Add Word"] []
+--  ]
+-- ]

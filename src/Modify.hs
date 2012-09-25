@@ -15,6 +15,8 @@ import IfaceType (toIfaceTyCon_name)
 import InstEnv (extendInstEnvList,
                 is_cls, is_dfun, is_tcs, is_flag)
 import Module
+import Name (nameOccName)
+import OccName (isTcOcc)
 import Var
 
 
@@ -85,11 +87,13 @@ modifyDeps mf imps mod = extendModuleEnv imps
 modifyAvailInfos mf = liftM concat . mapM (modifyAvailInfo mf)
 modifyAvailInfo mf i@(Avail name) = return [i, Avail (modifyName mf name)]
 modifyAvailInfo mf i@(AvailTC name names) = do
-   tycon <- lookupTyThingName name >>= return . tyThingTyCon . (fromJustNote $
-                                           "no modify tycon for exports" ++
-                                               nameString name)
-   tycon' <- modifyLookupTyCon mf tycon
-   let cons = map dataConName $ tyConDataCons tycon'
+   cons <- case isTcOcc $ nameOccName name of
+             True -> do tycon <- lookupTyThingName name >>= return . tyThingTyCon . (fromJustNote $
+                                                                "no modify tycon for exports" ++
+                                                                    nameString name)
+                        tycon' <- modifyLookupTyCon mf tycon
+                        return $ map dataConName $ tyConDataCons tycon'
+             False -> return []
    return [i, AvailTC (modifyName mf name)
                       (cons ++ (map (modifyName mf) names))]
 

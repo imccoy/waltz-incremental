@@ -18,13 +18,13 @@ inctime = mkModule mainPackageId inctimeName
 -- make the name with that string, and just use the unique from that new
 -- name. Essentially we piggy-back on FastString's impure trickery.
 mutantNameUnique oldName nameSpace suffix
-  = setNameUnique oldName (nameUnique mutantName)
-  where mutantName = mutantNameIntoSpace oldName nameSpace suffix
+  = setNameUnique oldName (nameUnique incrementaliseName)
+  where incrementaliseName = mutantNameIntoSpace oldName nameSpace suffix
 
 mutantNameUniqueLocal oldName suffix
   = mutantNameUnique oldName (occNameSpace $ nameOccName oldName) suffix
 
-mutantName oldName = mutantNameIntoSpace oldName
+incrementaliseName oldName = mutantNameIntoSpace oldName
                                          (occNameSpace $ nameOccName oldName)
                                          "incrementalised"
 

@@ -32,6 +32,7 @@ import VarSet (mkVarSet)
 import AdditionalDataCons
 import Lookups
 import Names
+import TypeUtils
 import Utils
 
 mutantId :: Var -> TypeLookupM Var
@@ -40,9 +41,9 @@ mutantId = mutantIdO Replicate
 mutantIdO replicate_type var = mk var' =<<
                                  (mutantTypeO replicate_type $ varType var)
   where var' | List.isPrefixOf "$f" (occNameString $ nameOccName $ varName var)
-             = mutantClsName (mutantName $ varName var) $ varType var
+             = mutantClsName (incrementaliseName $ varName var) $ varType var
              | otherwise                                    
-             = (mutantName $ varName var)
+             = (incrementaliseName $ varName var)
         mk :: Name -> Type -> TypeLookupM Var
         mk n t | isTcTyVar var          = return $ mkTcTyVar n t 
                                                              (tcTyVarDetails var)
@@ -158,7 +159,7 @@ mutantTyCon tyCon = do
       else return ([],[],[]) 
   return (newTyCon, classBinds ++ dataConsMkFuncs, instances)
   where
-    name = mutantName $ getName tyCon
+    name = incrementaliseName $ getName tyCon
     kind = duplicateKindArgs $ tyConKind tyCon
     isRec = boolToRecFlag $ isRecursiveTyCon tyCon
     predTys = tyConStupidTheta tyCon -- can we incrementalise constraints?
@@ -221,10 +222,10 @@ mutantDataCon dataCon = do
   worker' <- mutantIdO NoReplicate $ dataConWorkId dataCon
   let dcIds = DCIds wrapper' worker'
   return $ mkDataCon 
-    (mutantName $ dataConName dataCon)
+    (incrementaliseName $ dataConName dataCon)
     (dataConIsInfix dataCon)
     (dataConStrictMarks dataCon)
-    (map mutantName $ dataConFieldLabels dataCon)
+    (map incrementaliseName $ dataConFieldLabels dataCon)
     univTyVars
     exTyVars
     eqSpec
@@ -753,14 +754,3 @@ testVarOccName n baseName = mkOccName OccName.varName
                                       (baseName ++ "_test" ++ show n)
 
 
-splitArrowAppTy_maybe t = do -- maybe monad
-  (arrowAndFirst, rest) <- splitAppTy_maybe t
-  (arrow, first) <- splitAppTy_maybe arrowAndFirst
-  (funTyConCandidate, _) <- splitTyConApp_maybe arrow
-  if funTyConCandidate == funTyCon
-    then return (first, rest)
-    else mzero
-
-isArrowAppTy = isJust . splitArrowAppTy_maybe
-
-mkArrow a b = mkAppTy (mkAppTy (mkTyConApp funTyCon []) a) b

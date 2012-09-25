@@ -44,7 +44,7 @@ import Dbise
 
 mutantCoreModule = modifyCoreModule $ ModifyFuncs {
   modifyCoreBinds = mutantCoreBinds,
-  modifyName = mutantName,
+  modifyName = incrementaliseName,
   --lookupmodifyTyCon :: TyCon -> TypeLookupM TyCon
   --lookupmodifyTyCon tyCon
   --   = lookupTyThingName (tyConName tyCon) >>=
@@ -86,7 +86,6 @@ process targetFile modName = do
       t <- typecheckModule p
       d <- desugarModule t
       d1 <- mutantCoreModule (ms_mod modSum) (verifySingularVarDecsCoreModule d)
-                 -- >>= traceCoreModuleG
       d' <- dbiseCoreModule (ms_mod modSum) d1
       liftIO $ do
         showAllModuleContents $ mg_types $ dm_core_module $ d'
