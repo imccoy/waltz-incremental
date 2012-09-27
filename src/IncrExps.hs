@@ -27,6 +27,7 @@ import VarSet (elemVarSet)
 
 
 import AdditionalDataCons
+import ExprUtils
 import Lookups
 import IncrTypes
 import TypeUtils
@@ -370,6 +371,3 @@ isRealWorld (splitTyConApp_maybe -> Just (tyCon, args))
    = getUnique (getName tyCon) == statePrimTyConKey
 isRealWorld _ = False
 
-collectTypeArgs expr = go expr []
-  where go (App expr arg@(isTypeArg -> True)) args = go expr (arg:args)
-        go expr                               args = (expr, args)
