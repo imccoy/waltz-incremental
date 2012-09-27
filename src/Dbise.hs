@@ -55,17 +55,10 @@ dbiseType type_@(splitArrowAppTy_maybe -> Just (first, rest)) = do
   rest' <- dbiseType rest
   return $ mkArrow first' rest'
 
-dbiseType type_@(splitAppTy_maybe -> Just (first, rest)) = do
-  first' <- return first
-  rest' <- return rest
-  return $ mkAppTy first' rest'
 
-
-dbiseType type_@(splitTyConApp_maybe -> Just (tyCon, args)) = do
+dbiseType type_ = do
   dbRefTC <- dbRefTyCon
   return $ mkTyConApp dbRefTC [type_]
-
-dbiseType type_ = return type_
 
 dbisableType (splitForAllTys -> ((_:_), ty)) = dbisableType ty
 
