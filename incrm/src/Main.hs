@@ -30,13 +30,10 @@ import Var
 
 import GHC hiding (exprType)
 
-import CorePrep (corePrepPgm)
-import CoreToStg (coreToStg)
-import SimplStg (stg2stg)
-import TidyPgm (tidyProgram)
-import qualified Generator.TopLevel as Js (generate)
-import Javascript.Language (Javascript)
-import qualified Javascript.Formatted as Js
+--import CorePrep (corePrepPgm)
+--import CoreToStg (coreToStg)
+--import SimplStg (stg2stg)
+--import TidyPgm (tidyProgram)
 
 import Lookups
 import Names
@@ -156,10 +153,12 @@ process targetFile modName = do
                                    , outputFile = Just $ targetFile ++ ".o"}
 
       (hscGenOutput hscBatchCompiler) (dm_core_module d') modSum Nothing
+      {-
       (cg, _) <- cgGutsFromModGuts $ dm_core_module d' -- $ verifySingularVarDecsCoreModule d'
       liftIO $ do
-        js <- concreteJavascriptFromCgGuts dflags' $ cg
-        writeFile (targetFile ++ ".js") js
+       js <- concreteJavascriptFromCgGuts dflags' $ cg
+       writeFile (targetFile ++ ".js") js
+      -}
       return ()
 
 lintPrintAndFail desugaredModule = do 
@@ -180,6 +179,7 @@ main = do
                              [from, moduleName] -> (from, moduleName)
   process from moduleName
 
+{-
 -- this function stolen pretty hard from ghcjs
 concreteJavascriptFromCgGuts :: DynFlags -> CgGuts -> IO String
 concreteJavascriptFromCgGuts dflags core =
@@ -198,7 +198,7 @@ cgGutsFromModGuts guts =
   do hscEnv <- getSession
      simplGuts <- hscSimplify guts
      liftIO $ tidyProgram hscEnv simplGuts
-
+-}
 
 showAllModulesContents :: Ghc ()
 showAllModulesContents = do

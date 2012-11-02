@@ -9,6 +9,12 @@ import InctimeHtml
 [] `append` a = a
 (x:xs) `append` a = x:(xs `append` a)
 
+sameString :: String -> String -> Bool
+sameString [] [] = True
+sameString (a:as) (b:bs) = case a == b of
+                             True -> sameString as bs
+                             False -> False
+sameString _ _ = False
 
 
 data WordDefinitions = WordDefinitions String [String]
@@ -33,7 +39,7 @@ newDefinitionInputs = filter isNewDefinitionInput
 definitionInputsFor w inputs = filter (inputContainsWord w) (newDefinitionInputs inputs)
 wordFrom (NewWordInput w) = w
 wordFrom (NewDefinitionInput w _) = w
-inputContainsWord word i = wordFrom i == word
+inputContainsWord word i = wordFrom i `sameString` word
 definitionFrom i = case i of 
                      (NewDefinitionInput _ d) -> d
                      otherwise                -> "NOTADEFINITION" -- should be error, strictly speaking
@@ -43,6 +49,8 @@ definitionsFrom (WordDefinitions _ ds) = ds
 wordsFromInputs inputs = map wordFrom (newWordInputs inputs)
 definitionsFromInputsFor w inputs = map definitionFrom (definitionInputsFor w inputs)
 definitions inputs = mapDmapWithKey definitionsFromInputsFor (shuffle wordFrom inputs)
+
+initial_state = [NewWordInput "Dog", NewDefinitionInput "Dog" "A Wolfish Beast"]
 
 app_state inputs
   = AppState { appStateNumWords = length (newWordInputs inputs)

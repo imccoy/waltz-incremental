@@ -104,7 +104,10 @@ mutantExp (Lit lit) = return (Lit lit)
 
 mutantLam expr = do
   let (tyVars, valVars, exprRemaining) = collectTyAndValBinders expr
-  let suffix = concatMap (nameString . varName) valVars ++ "Ident"
+  let suffix = case valVars of
+                 [] -> "ident"
+                 otherwise -> concatMap (nameString . varName) valVars ++
+                                           "Ident"
   let (additionalVarTys, finalResultTy) = splitFunTys $
                                             snd $ splitForAllTys $
                                               exprType exprRemaining

@@ -5,8 +5,6 @@ import Data.Maybe (fromJust)
 import Data.List (intersperse)
 import InctimeHtml
 
-import ToJsonString
-
 lastInQueryString :: [(String, Maybe String)] -> String -> String
 lastInQueryString query name = case filter (\(n, v) -> n == name) query of
                                  [] -> error ("nothing for " ++ name ++ " in " ++ (show query))
@@ -19,7 +17,7 @@ renderHtml (Element n attrs children) = concat ["<", n, " ", renderAttrs attrs,
                                                 "</", n, ">"]
 renderHtml (TextElement s) = "<span>" ++ s ++ "</span>"
 renderHtml (TextElementBox (IncBox f v)) = concat ["<span data-incbox=\"",
-                                                   toJsonString v,
+                                                   "UNDEFINED-JUST-NOW-SORRY",
                                                    "\">",
                                                    f v,
                                                    "</span>"]

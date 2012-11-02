@@ -599,7 +599,7 @@ incrementalisedClassBind tyCon mutantTyCon = do
                     , mkReplace
                     , mkIdentity
                     , extractReplace]
-  where baseName = "Incrementalised" ++ (nameString $ getName $ tyCon)
+  where baseName = "incrementalised" ++ (nameString $ getName $ tyCon)
         testVar = testArgVar baseName incrementalisedType
         testVarC = testArgVar (baseName ++ "C") incrementalisedType
         

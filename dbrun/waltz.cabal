@@ -6,8 +6,8 @@ Author:         Iain McCoy
 Synopsis:       The deranged blatherings of a madman
 Build-Type:     Simple
 
-Executable Incrementaliser
+Executable dbrun
   Hs-Source-Dirs: src
   Main-Is: Main.hs
-  build-depends:  base, ghc, ghc-paths, directory, monads-tf, safe, containers
-  ghc-options: -Werror -fwarn-unused-imports -i../ghcjs/src -DGHC7
+  build-depends:  base, extcore, mtl, safe, containers, array, ghc-prim
+  ghc-options: -Werror -fwarn-unused-imports -fext-core
