@@ -49,14 +49,14 @@ initDb env heap value = do
   disconnect conn
   return r
 
-returnId :: (IConnection conn) => conn -> IO Integer
+returnId :: (IConnection conn) => conn -> IO DbRef
 returnId conn = do
   resultSet <- quickQuery' conn "SELECT last_insert_rowid()" []
   let resultRow = head resultSet
   let resultId = head resultRow
-  return (fromSql resultId :: Integer)
+  return $ DbRef (fromSql resultId :: Integer)
 
-addDb :: (IConnection conn) => conn -> Env -> Heap -> Value -> IO Integer
+addDb :: (IConnection conn) => conn -> Env -> Heap -> Value -> IO DbRef
 addDb conn initialEnv heap (DataValue tag args) = do
   db_args <- addDbArgs conn initialEnv heap args
   run conn
@@ -115,7 +115,7 @@ marshalExp conn initialEnv heap env (CoreExp exp) args = ('c':(show exp'), args'
 
 applyChangeDb _ _ _ = return undefined
 
-retrieveValue id = do
+retrieveValue (DbRef id) = do
   conn <- connection
   result <- quickQuery' conn "SELECT * FROM everything WHERE id = ?" [toSql id]
   return $ retrieveValue' $ headNote ("No value in db at " ++ show id) result
@@ -141,7 +141,7 @@ marshalValue ty string integer dcon args
  | ty == db_value_type_string   = return $ StringValue string
  where 
    arg_strings = splitOn "," args
-   arg_ints msg = forM arg_strings (parseWithMessage msg) :: HeapM [Integer]
+   arg_ints msg = forM arg_strings (parseWithMessage msg) :: HeapM [DbRef]
    parseWithMessage msg s = liftIO $ handle (stop msg s)
                                             (let s' = read s
                                               in s' `seq` return s')

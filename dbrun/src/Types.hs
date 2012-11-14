@@ -14,6 +14,12 @@ import Language.Core.Parser()
 deriving instance Read Pname
 deriving instance Read AnMname
 
+newtype DbRef = DbRef Integer
+instance Show DbRef where
+  show (DbRef i) = show i
+instance Read DbRef where
+  readsPrec i s = map (\(v, r) -> (DbRef v, r)) $ readsPrec i s
+
 type Arity = Int
 data InterpExp = CoreExp Exp
                | RtExp ([HeapValue] -> HeapM Value) AnMname String Arity
@@ -25,7 +31,7 @@ instance Show InterpExp where
   show (RtExp _ _ name _) = "RtExp " ++ name
 
 type HeapValue = Integer
-data Value = DatabaseValue Integer
+data Value = DatabaseValue DbRef
            | Thunk { thunkEnv :: Env
                    , thunkExp :: InterpExp
                    , thunkArgs :: [HeapValue] }
@@ -42,14 +48,14 @@ showValue heap (DataValue tag args) = "DataValue " ++ show tag ++ "\n" ++
 showValue _ (IntegralValue n)     = "IntegralValue " ++ show n
 showValue _ (CharValue c)         = "CharValue " ++ show c
 showValue _ (StringValue s)       = "StringValue " ++ s
-showValue _ (DatabaseValue id) = "DatabaseValue " ++ show id
+showValue _ (DatabaseValue (DbRef id)) = "DatabaseValue " ++ show id
 
 showValueShort (Thunk env exp args)  = "Thunk " ++ show exp
 showValueShort (DataValue tag args)  = "DataValue " ++ show tag
 showValueShort (IntegralValue n)     = "IntegralValue " ++ show n
 showValueShort (CharValue c)         = "CharValue " ++ show c
 showValueShort (StringValue s)       = "StringValue " ++ s
-showValueShort (DatabaseValue id) = "DatabaseValue " ++ show id
+showValueShort (DatabaseValue (DbRef id)) = "DatabaseValue " ++ show id
 
 
 
