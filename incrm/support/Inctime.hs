@@ -155,6 +155,10 @@ filter_incrementalised f f_inc xs (BuiltinList_incrementalised_build_using_1 x)
   | otherwise = BuiltinList_incrementalised_identity
 filter_incrementalised f f_inc xs (BuiltinList_incrementalised_identity)
   = BuiltinList_incrementalised_identity
+filter_incrementalised f f_inc xs (BuiltinList_incrementalised_replace _) = error "filter_incrementalised replace"
+filter_incrementalised f f_inc xs (BuiltinList_incrementalised_build_using_0 _) = error "filter_incrementalised build 0"
+filter_incrementalised f f_inc xs (BuiltinList_incrementalised) = error "filter_incrementalised empty"
+filter_incrementalised f f_inc xs (BuiltinListCons_incrementalised _ _) = error "filter_incrementalised cons"
 
 class Num_incrementalised base incrementalised | incrementalised -> base where
   plus_incrementalised_wrongcc :: incrementalised -> incrementalised -> incrementalised
@@ -341,8 +345,10 @@ length_incrementalised _ (BuiltinList_incrementalised_build_using_1 _)
   = Int_incrementalised_add (Int_incrementalised_replace 1) (Int_incrementalised_identity)
 length_incrementalised _ (BuiltinList_incrementalised_identity)
   = Int_incrementalised_identity
-length_incrementalised (_:t) (BuiltinListCons_incrementalised h_change t_change)
+length_incrementalised ~(_:t) (BuiltinListCons_incrementalised h_change t_change)
   = length_incrementalised t t_change
+length_incrementalised _ (BuiltinList_incrementalised )
+  = error "length_incrementalised on []_incrementalised"
 length_incrementalised _ _ = error "can't do incrementalised length"
 
 type String_incrementalised = BuiltinList_incrementalised Char Char_incrementalised
@@ -410,6 +416,16 @@ shuffle_incrementalised :: forall a a_inc b b_inc.
                                     [a] (BuiltinList_incrementalised a a_inc))
 shuffle_incrementalised f f_inc xs c@(BuiltinList_incrementalised_build_using_1 x)
   = MapD_incrementalised_atkey (f x) c
+shuffle_incrementalised _ _ _ BuiltinList_incrementalised
+  = error "shuffle_inc empty list change"
+shuffle_incrementalised _ _ _ (BuiltinListCons_incrementalised _ _)
+  = error "shuffle_inc cons change"
+shuffle_incrementalised _ _ _ (BuiltinList_incrementalised_replace _)
+  = error "shuffle_inc replace change"
+shuffle_incrementalised _ _ _ (BuiltinList_incrementalised_identity)
+  = error "shuffle_inc identity change"
+shuffle_incrementalised _ _ _ (BuiltinList_incrementalised_build_using_0 _)
+  = error "shuffle_inc build 0 change"
 
 mapDmapWithKey_incrementalised :: forall k k_inc v1 v1_inc v2 v2_inc.
                                   (Incrementalised k k_inc,
@@ -424,6 +440,10 @@ mapDmapWithKey_incrementalised f f_inc m (MapD_incrementalised_atkey k change)
   = let v0 = mapDlookup k m
         c1 = f_inc k mkIncrementalisedIdentity v0 change
      in MapD_incrementalised_atkey k c1
+mapDmapWithKey_incrementalised _ _ _ (MapD_incrementalised_identity)
+  = error "mapWithKey identity change"
+mapDmapWithKey_incrementalised _ _ _ (MapD_incrementalised_replace _)
+  = error "mapWithKey replace change"
 
 mapDkeys_incrementalised :: forall k k_inc v v_inc.
                               (Incrementalised k k_inc,

@@ -9,5 +9,5 @@ Build-Type:     Simple
 Executable dbrun
   Hs-Source-Dirs: src
   Main-Is: Main.hs
-  build-depends:  base, extcore, mtl, safe, containers, array, ghc-prim
+  build-depends:  base, extcore, mtl, safe, containers, array, ghc-prim, HDBC, HDBC-sqlite3, directory, transformers, split, parsec, process
   ghc-options: -Werror -fwarn-unused-imports -fext-core

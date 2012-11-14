@@ -1,12 +1,11 @@
 {-# LANGUAGE ScopedTypeVariables, ViewPatterns, DoRec #-}
 module Reduce where
 
+import Db
 import Types
 
-import Control.Monad (liftM2)
+import Control.Monad.IO.Class (liftIO)
 import Data.Foldable (foldrM)
-import Data.List (isPrefixOf)
-import Debug.Trace
 import Safe
 
 import Language.Core.Core
@@ -25,21 +24,45 @@ envFromVdefg resultEnv vdefg env
 
 whnf :: HeapValue -> HeapM ()
 whnf heapValue = go =<< heapGet heapValue
-  where go value | isThunkValue value = reduce heapValue >> whnf heapValue
-                 | otherwise          = return ()
+  where go value | not (irreducibleValue value) = do reduce heapValue
+                                                     whnf heapValue
+                 | otherwise                    = return ()
 
 deepseq :: HeapValue -> HeapM ()
 deepseq heapValue = do go =<< (whnf heapValue >> heapGet heapValue)
-  where go (DataValue con args)
-          | "DZC" `isPrefixOf` snd con = return ()
-          | otherwise                  = mapM_ deepseq args
+  where go (DataValue con args)        = mapM_ deepseq args
+        go v@(DatabaseValue _)         = reduce heapValue >> deepseq heapValue
         go v                           = return ()
+
+irreducibleValue v@(Thunk _ (CoreExp (Lam (Vb _) _)) [])  = True
+irreducibleValue v@(Thunk _ (CoreExp _) _)                = False
+irreducibleValue v@(Thunk _ rt@(RtExp _ _ _ _) args)
+          | rtExpArity rt > length args              = True
+          | otherwise                                = False
+irreducibleValue (DatabaseValue _) = False
+irreducibleValue _ = True
 
 reduce :: HeapValue -> HeapM ()
 reduce heapValue = heapChange (reduce' heapValue) heapValue
+{-
+reduce heapValue = do v <- heapGet heapValue
+                      h <- heapGetFull
+                      liftIO $ putStrLn $ "before " ++ show heapValue
+                                                ++ " " ++ showValue h v
+                      v' <- reduce' heapValue v
+                      h' <- heapGetFull
+                      liftIO $ v' `seq` putStrLn $ "after " ++ show heapValue
+                                                ++ " " ++ showValue h' v'
+                      heapSet heapValue v'
+-}
 
+reduce' heapValue v@(DatabaseValue id) = do
+  constructor <- liftIO $ retrieveValue id
+  constructor
+                                            
 reduce' heapValue v@(isThunkValue -> False)                 = return v
-reduce' heapValue thunk@(Thunk { thunkExp = (RtExp f _ a) })= do
+
+reduce' heapValue thunk@(Thunk { thunkExp = (RtExp f _ _ a) })= do
   case compare a (length (thunkArgs thunk)) of
     LT -> do let (a1, a2) = splitAt a (thunkArgs thunk)-- oversaturated
              addThunkArgs a2 =<< f a1
@@ -54,6 +77,7 @@ reduce' heapValue thunk@(Thunk { thunkExp = (CoreExp exp)}) = go exp
   go (Var qVar)       = do let val = fromJustNote 
                                       ("Looking for var " ++ show qVar)
                                       (envLookup qVar $ thunkEnv thunk)
+                           liftIO $ putStrLn $ "resolved var to " ++ show val
                            val' <- heapGet val
                            return $ reduceVar val' (thunkArgs thunk)
     where reduceVar val'@(Thunk {}) args = val' { thunkArgs = thunkArgs val'
@@ -67,10 +91,8 @@ reduce' heapValue thunk@(Thunk { thunkExp = (CoreExp exp)}) = go exp
   go (App exp arg)    = do newArg <- heapAdd (Thunk (thunkEnv thunk)
                                                     (CoreExp arg)
                                                     [])
-                           let r = thunk { thunkArgs = newArg:(thunkArgs thunk)
-                                         , thunkExp = CoreExp exp }
-                           i <- liftM2 showValue heapGetFull (return r)
-                           return $ trace i r
+                           return $ thunk { thunkArgs = newArg:(thunkArgs thunk)
+                                          , thunkExp = CoreExp exp }
 
   go (Appt exp _)     = return $
                         thunk { thunkExp = CoreExp exp }

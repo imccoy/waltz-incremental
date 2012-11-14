@@ -1,10 +1,10 @@
 module Fauxlude where
 
 import Prelude hiding (map)
+import Reduce
 import Funcs ()
 
 import Builtins
-import Reduce
 import Types
 
 import Control.Monad (liftM2)
@@ -17,13 +17,17 @@ builtinsEnv :: Env -> HeapM Env
 builtinsEnv hsEnv
    = addBuiltin ghcBaseModule "unpackCStringzh" unpackCString 1 envEmpty >>=
      addBuiltin ghcBaseModule "ord" ord 1 >>=
+     addBuiltin ghcErrorModule "error" patError 1 >>=
+     addBuiltin ghcExceptionModule "patError" patError 1 >>=
      addBuiltinH ghcNumModule "zp" (tcThunk 0) 1 >>=
      addBuiltinH ghcNumModule "fromInteger" (tcThunk 6) 1 >>=
      addBuiltinM ghcNumModule "zdfNumInteger" zdfNumInteger 0 >>=
      addBuiltinFn ghcListModule "length" "listLength" hsEnv >>=
      addBuiltinFn ghcListModule "filter" "listFilter" hsEnv >>=
+     addBuiltinFn ghcListModule "all" "listAll" hsEnv >>=
      addBuiltinFn ghcBaseModule "map" "listMap" hsEnv >>=
      addBuiltinF ghcBaseModule "foldr" hsEnv >>=
+     addBuiltinFn ghcClassesModule "zdfOrdChar" "zdfOrdrChar" hsEnv >>=
      addBuiltinFn ghcClassesModule "zdfOrdZMZN" "zdfOrdrZMZN" hsEnv >>=
      addBuiltinFn ghcClassesModule "zdfEqZMZN" "zdfEqlZMZN" hsEnv >>=
      addBuiltinFn ghcClassesModule "zdfEqChar" "zdfEqlChar" hsEnv >>=
@@ -36,7 +40,6 @@ builtinsEnv hsEnv
      addBuiltin funcsAuxModule "intEq" intEq 2 >>=
      addBuiltin funcsAuxModule "intPlus" intPlus 2 >>=
      addBuiltin ghcGmpIntModule "smallInteger" smallInteger 1
-
 
 addBuiltinM mod name value arity env = do
   v <- value
@@ -56,7 +59,7 @@ heapGetArgs f a = f =<< mapM heapGet a
 addBuiltinH :: AnMname -> Id -> ([HeapValue] -> HeapM Value) -> Int -> Env
             -> HeapM Env
 addBuiltinH mod name f arity env = do
-  heapValue <- heapAdd (Thunk envEmpty (RtExp f name arity) [])
+  heapValue <- heapAdd (Thunk envEmpty (RtExp f mod name arity) [])
   return $ envInsert (Just mod, name) heapValue env
 
 addBuiltinF mod name = addBuiltinFn mod name name
@@ -65,6 +68,7 @@ addBuiltinFn :: AnMname -> Id -> Id -> Env -> Env -> HeapM Env
 addBuiltinFn mod name implName hsEnv env = do
   heapValue <- heapAdd (Thunk hsEnv (CoreExp $ Var (Just funcsModule, implName)) [])
   return $ envInsert (Just mod, name) heapValue env
+
 
 unpackCString [StringValue s] = foldrM go emptyListValue s
   where go c s = liftM2 consListValue (do c' <- heapAdd $ CharValue c
@@ -76,6 +80,22 @@ ord [CharValue c] = return $ IntegralValue $ fromIntegral $ fromEnum c
 ord [DataValue _ [c]] = do whnf c
                            c' <- heapGet c
                            ord [c']
+
+patError [s@(DataValue _ _)] = error =<< heapToNativeString s
+patError [StringValue s] = error s
+patError args = badArgs "patError" args
+
+heapToNativeString (DataValue con args)
+ | con == emptyList = return ""
+ | con == consList = do mapM_ whnf [h, t]
+                        h' <- heapToNativeChar =<< heapGet h
+                        t' <- heapToNativeString =<< heapGet t
+                        return (h':t')
+ where [h, t] = args
+
+heapToNativeChar (DataValue _ [arg]) = heapToNativeChar =<< heapGet arg
+heapToNativeChar (CharValue c) = return c
+                       
 
 smallInteger [IntegralValue i] = return $ IntegralValue i
 smallInteger args = badArgs "smallInteger" args
@@ -97,7 +117,7 @@ charEq args = badArgs "charEq" args
 
 zdfNumInteger = do
   addrs <- mapM (\(f,a,n) -> heapAdd (Thunk envEmpty
-                                      (RtExp (heapGetArgs f) n a)
+                                      (RtExp (heapGetArgs f) undefined n a)
                                       []))
                 [(zpInteger,2,"zpInteger")
                 ,(undefined,undefined,"subtract") -- subtract

@@ -27,6 +27,12 @@ listFilter f (a:as)
  | f a       = a:(listFilter f as)
  | otherwise = listFilter f as
 
+listAll :: (a -> Bool) -> [a] -> Bool
+listAll f (x:xs) = case f x of
+                     True -> listAll f xs
+                     False -> False
+listAll f [] = True
+
 foldr :: (a -> b -> b) -> b -> [a] -> b
 foldr f b [] = b
 foldr f b (a:as) = f a (foldr f b as)
