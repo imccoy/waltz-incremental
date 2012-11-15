@@ -6,7 +6,6 @@ import Types
 import Control.Exception (handle, ErrorCall)
 import Control.Monad (when, forM, liftM)
 import Control.Monad.IO.Class (liftIO)
-import Data.Char (isAlphaNum)
 import Data.List (intersperse)
 import System.Directory (doesFileExist, removeFile)
 import System.Exit (exitFailure)
@@ -17,7 +16,7 @@ import Safe
 import Database.HDBC
 import Database.HDBC.Sqlite3
 
-import Text.ParserCombinators.Parsec.Prim (parse)
+import Text.ParserCombinators.Parsec
 import Language.Core.Core
 import Language.Core.CoreUtils
 import Language.Core.ParsecParser
@@ -150,18 +149,31 @@ marshalValue ty string integer dcon args
                                     exitFailure
    load_exp ('b':string) = liftM Var $ parseWithMessage string "builtin thunk"
    load_exp ('c':string) = case parse coreFullExp ("db exp") string of
-                             Left err -> error $ show err
+                             Left err -> error $ "when parsing " ++ string
+                                               ++ "\ngot " ++ show err
                              Right exp -> return exp
-parseDcon ('(':s) = let [mnameString, '"':dconString'] = splitOn "," s
-                        dconString = takeWhile (/= '"') dconString'
-                        mname = parseMname mnameString
-                     in mname `seq` return (mname, dconString)
-parseMname "Nothing" = Nothing
-parseMname ('J':'u':'s':'t':' ':s) = Just $ parseAnMname s
-parseAnMname s = let [package, s1] = splitOn ":" s
-                     modulesAndNameString = takeWhile isAlphaNum s1
-                     modulesAndName = splitOn "zi" modulesAndNameString
-                     (name:rmodules) = reverse modulesAndName
-                     modules = reverse rmodules
-                  in M (P package, modules, name)
 
+parseDcon s = case parse parseDconM ("dcon name") s of
+                Left err -> error $ "when parsing " ++ s ++ " got " ++ show err
+                Right exp -> return exp
+parseDconM = do char '('
+                mname <- parseMname
+                char ','
+                char '"'
+                dconString <- many $ lower <|> upper 
+                char '"'
+                char ')'
+                return (mname, dconString)
+parseMname :: Parser Mname
+parseMname = choice [nothing, just]
+  where nothing = do caseString "Nothing"
+                     return Nothing
+        just = do caseString "Just "
+                  package <- many $ lower <|> upper
+                  char ':'
+                  modules <- many $ try $ do
+                    mod <- many $ lower <|> upper
+                    caseString "zi"
+                    return mod
+                  name <- many $ lower <|> upper
+                  return $ Just $ M (P package, modules, name)
