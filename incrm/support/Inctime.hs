@@ -14,6 +14,8 @@ import GHC.Prim
 import Data.Data
 import Unsafe.Coerce (unsafeCoerce)
 
+[] `append` a = a
+(x:xs) `append` a = x:(xs `append` a)
 
 class Incrementalised base incrementalised | incrementalised -> base where
   isIncrementalisedReplace :: incrementalised -> Bool
@@ -176,7 +178,7 @@ data Char_incrementalised = Char_incrementalised_C# Char#
 instance ApplicableIncrementalised Char Char_incrementalised where
   applyInputChange (Char_incrementalised_replace n) _ = n
   applyInputChange (Char_incrementalised_identity) m = m
-  applyInputChange c _ = error $ "no applyInputChange for " ++ (show c)
+  applyInputChange c _ = error $ "no applyInputChange for " `append` (show c)
 
 instance Incrementalised Char Char_incrementalised where
   isIncrementalisedReplace (Char_incrementalised_replace _) = True
@@ -274,7 +276,8 @@ instance ApplicableIncrementalised Int Int_incrementalised where
   applyInputChange (Int_incrementalised_add a b) m = (applyInputChange a m) + (applyInputChange b m)
   applyInputChange (Int_incrementalised_replace n) _ = n
   applyInputChange (Int_incrementalised_identity) m = m
-  applyInputChange c _ = error $ "no applyInputChange for " ++ (show c)
+  applyInputChange (Int_incrementalised_I# _) m = m
+  applyInputChange c _ = error $ "no applyInputChange for " `append` (show c)
 
 -- data ZMZN a = ZC a (ZMZN a) | []
 data BuiltinList_incrementalised a a_incrementalised = 
@@ -299,8 +302,8 @@ mkIncrementalisedBuiltinListCons _ h _ t = BuiltinListCons_incrementalised h t
 
 instance (ApplicableIncrementalised elem elem_incrementalised) => 
             ApplicableIncrementalised ([elem]) (BuiltinList_incrementalised elem elem_incrementalised) where
-  applyInputChange (BuiltinListCons_incrementalised hchange tchange) (h:t) = (applyInputChange hchange h):(applyInputChange tchange t)
-  applyInputChange (BuiltinList_incrementalised) [] = []
+  applyInputChange (BuiltinListCons_incrementalised hchange tchange) ~(h:t) = (applyInputChange hchange h):(applyInputChange tchange t)
+  applyInputChange (BuiltinList_incrementalised) ~[] = []
   applyInputChange (BuiltinList_incrementalised_build_using_1 a) as = a:as
   applyInputChange (BuiltinList_incrementalised_build_using_0 as) a = a ++ as -- dubious, at best
   applyInputChange (BuiltinList_incrementalised_replace n) _ = n

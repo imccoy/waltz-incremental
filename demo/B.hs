@@ -2,7 +2,7 @@ module B where
 import Prelude
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Inctime
+import Inctime hiding (append)
 import InctimeHtml
 
 

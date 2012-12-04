@@ -112,21 +112,35 @@ marshalExp conn initialEnv heap env (CoreExp exp) args = ('c':(show exp'), args'
                         otherwise -> error $ "marshalExp can't resolve var " ++ show n
   
 
-applyChangeDb _ _ _ = return undefined
+applyChangeDb conn env mods deepseq db_value change_value changer = do
+  liftIO $ putStrLn $ "The Old Truth Is " ++ show db_value
+  db_value_heap <- heapAdd (DatabaseValue db_value)
+  changed_value <- eval mods env "Inctime"
+                                 "applyInputChange"
+                                 [changer
+                                 ,change_value
+                                 ,db_value_heap]
+  deepseq changed_value
+  heap <- heapGetFull
+  one_truth <- liftIO $ addDb conn env heap (heapGet' heap changed_value)
+  liftIO $ commit conn
+  liftIO $ putStrLn $ "The New Truth Is " ++ show one_truth
+  
 
-retrieveValue (DbRef id) = do
+retrieveValue env (DbRef id) = do
   conn <- connection
   result <- quickQuery' conn "SELECT * FROM everything WHERE id = ?" [toSql id]
-  return $ retrieveValue' $ headNote ("No value in db at " ++ show id) result
-retrieveValue' (id:ty:string:integer:dcon:dcon_args:[])
-   = marshalValue (fromSql ty :: Integer)
+  return $ retrieveValue' env $ headNote ("No value in db at " ++ show id) result
+retrieveValue' env (id:ty:string:integer:dcon:dcon_args:[])
+   = marshalValue env
+                  (fromSql ty :: Integer)
                   (fromSql string :: String)
                   (fromSql integer :: Integer)
                   (fromSql dcon :: String)
                   (fromSql dcon_args :: String)
 
 
-marshalValue ty string integer dcon args
+marshalValue env ty string integer dcon args
  | ty == db_value_type_dcon     = do arg_refs <- mapM (heapAdd . DatabaseValue)
                                                       =<< arg_ints "dcon arg"
                                      dcon' <- parseDcon dcon
@@ -134,18 +148,20 @@ marshalValue ty string integer dcon args
  | ty == db_value_type_thunk    = do arg_refs <- mapM (heapAdd . DatabaseValue)
                                                       =<< arg_ints "thunk arg"
                                      exp <- liftM CoreExp (load_exp string)
-                                     return $ Thunk envEmpty exp arg_refs
+                                     return $ Thunk (fromJustNote "no default env" env) exp arg_refs
  | ty == db_value_type_integral = return $ IntegralValue integer
  | ty == db_value_type_char     = return $ CharValue $ head string
  | ty == db_value_type_string   = return $ StringValue string
  where 
-   arg_strings = splitOn "," args
+   arg_strings
+     | args == "" = []
+     | otherwise  = splitOn "," args
    arg_ints msg = forM arg_strings (parseWithMessage msg) :: HeapM [DbRef]
    parseWithMessage msg s = liftIO $ handle (stop msg s)
                                             (let s' = read s
                                               in s' `seq` return s')
-   stop msg s (e :: ErrorCall) = do putStrLn $ "couldn't parse " ++ s
-                                                ++ " as " ++ msg
+   stop msg s (e :: ErrorCall) = do putStrLn $ "couldn't parse '" ++ s
+                                                ++ "' as " ++ msg
                                     exitFailure
    load_exp ('b':string) = liftM Var $ parseWithMessage string "builtin thunk"
    load_exp ('c':string) = case parse coreFullExp ("db exp") string of
@@ -153,7 +169,7 @@ marshalValue ty string integer dcon args
                                                ++ "\ngot " ++ show err
                              Right exp -> return exp
 
-parseDcon s = case parse parseDconM ("dcon name") s of
+parseDcon s = case parse parseDconM "dcon name" s of
                 Left err -> error $ "when parsing " ++ s ++ " got " ++ show err
                 Right exp -> return exp
 parseDconM = do char '('
@@ -171,9 +187,8 @@ parseMname = choice [nothing, just]
         just = do caseString "Just "
                   package <- many $ lower <|> upper
                   char ':'
-                  modules <- many $ try $ do
-                    mod <- many $ lower <|> upper
-                    caseString "zi"
-                    return mod
-                  name <- many $ lower <|> upper
+                  modulesAndNameS <- many $ lower <|> upper
+                  let modulesAndName = splitOn "zi" modulesAndNameS
+                  let (name:rmodules) = reverse modulesAndName
+                  let modules =  reverse rmodules
                   return $ Just $ M (P package, modules, name)

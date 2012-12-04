@@ -7,6 +7,7 @@ import Types
 import Control.Monad.IO.Class (liftIO)
 import Data.Foldable (foldrM)
 import Safe
+import Debug.Trace
 
 import Language.Core.Core
 
@@ -21,17 +22,26 @@ envFromVdefg resultEnv vdefg env
 
 
 
-
 whnf :: HeapValue -> HeapM ()
-whnf heapValue = go =<< heapGet heapValue
-  where go value | not (irreducibleValue value) = do reduce heapValue
-                                                     whnf heapValue
+whnf = whnfWithout (\_ -> False)
+
+whnfWithout skip heapValue = go =<< heapGet heapValue
+  where go value | skip value                   = return ()
+                 | not (irreducibleValue value) = do reduce heapValue
+                                                     whnfWithout skip heapValue
                  | otherwise                    = return ()
 
-deepseq :: HeapValue -> HeapM ()
-deepseq heapValue = do go =<< (whnf heapValue >> heapGet heapValue)
-  where go (DataValue con args)        = mapM_ deepseq args
-        go v@(DatabaseValue _)         = reduce heapValue >> deepseq heapValue
+deepseq = deepseqWithout (\_ -> False)
+
+deepseqWithout :: (Value -> Bool) -> HeapValue -> HeapM ()
+deepseqWithout skip heapValue = do go =<< (whnfWithout skip heapValue >> heapGet heapValue)
+  where go (skip -> True)              = trace ("deepseqWithout skipping " ++ show heapValue) $
+                                         return ()
+        go (DataValue con args)        = trace ("deepseqWithout datacon recursing " ++ show heapValue ++ " " ++ show args) $
+                                         mapM_ (deepseqWithout skip) args
+        go v@(DatabaseValue _)         = trace ("deepseqWithout db resolving " ++ show heapValue) $
+                                         reduce heapValue >>
+                                         deepseqWithout skip heapValue
         go v                           = return ()
 
 irreducibleValue v@(Thunk _ (CoreExp (Lam (Vb _) _)) [])  = True
@@ -43,8 +53,7 @@ irreducibleValue (DatabaseValue _) = False
 irreducibleValue _ = True
 
 reduce :: HeapValue -> HeapM ()
-reduce heapValue = heapChange (reduce' heapValue) heapValue
-{-
+--reduce heapValue = heapChange (reduce' heapValue) heapValue
 reduce heapValue = do v <- heapGet heapValue
                       h <- heapGetFull
                       liftIO $ putStrLn $ "before " ++ show heapValue
@@ -54,10 +63,10 @@ reduce heapValue = do v <- heapGet heapValue
                       liftIO $ v' `seq` putStrLn $ "after " ++ show heapValue
                                                 ++ " " ++ showValue h' v'
                       heapSet heapValue v'
--}
 
 reduce' heapValue v@(DatabaseValue id) = do
-  constructor <- liftIO $ retrieveValue id
+  env <- getDefaultEnv
+  constructor <- liftIO $ retrieveValue env id
   constructor
                                             
 reduce' heapValue v@(isThunkValue -> False)                 = return v
@@ -77,14 +86,24 @@ reduce' heapValue thunk@(Thunk { thunkExp = (CoreExp exp)}) = go exp
   go (Var qVar)       = do let val = fromJustNote 
                                       ("Looking for var " ++ show qVar)
                                       (envLookup qVar $ thunkEnv thunk)
-                           liftIO $ putStrLn $ "resolved var to " ++ show val
-                           val' <- heapGet val
+                           val' <- heapGet val >>= 
+                                   noDb val
                            return $ reduceVar val' (thunkArgs thunk)
-    where reduceVar val'@(Thunk {}) args = val' { thunkArgs = thunkArgs val'
-                                                                      ++ args}
+    where 
+          reduceVar val'@(Thunk {}) args = val' { thunkArgs = thunkArgs val'
+                                                                      ++ args,
+                                                  thunkEnv = envMerge
+                                                                 (thunkEnv val')
+                                                                 (thunkEnv thunk)}
           reduceVar val' []              = val'
           reduceVar val' nonEmptyArgs    = error $ "losing args "
                                                      ++ (show $ thunkArgs thunk)
+          noDb val val'
+           | thunkArgs thunk == [] = return val'
+           | otherwise  = untilM (not . databaseValueMatcher)
+                                 (\_ -> do reduce val
+                                           heapGet val)
+                                 val'
   go (Dcon qDcon)     = return $ DataValue { tag = qDcon
                                            , dataArgs = thunkArgs thunk }
   go (Lit lit)        = return $ reduceLit lit
@@ -116,12 +135,15 @@ reduce' heapValue thunk@(Thunk { thunkExp = (CoreExp exp)}) = go exp
              ty alts) = do scrutHeap <- heapAdd $ Thunk (thunkEnv thunk)
                                                         (CoreExp exp)
                                                         []
+                           liftIO $ putStrLn $ "Case statement whnf " ++ show scrutHeap ++ " for " ++ show exp
                            whnf scrutHeap
                            scrut <- heapGet scrutHeap
                            let envWithScrut = envInsert (Nothing, fst vbind)
                                                         scrutHeap
                                                         (thunkEnv thunk)
-                           let alt = headNote ("no matching alt" ++ show vbind)
+                           let alt = headNote ("no matching alt at " ++ show vbind ++
+                                                 " for con " ++ showValueShort scrut ++ 
+                                                 " in " ++ show alts)
                                               [alt | alt <- alts
                                                    , matchingAlt alt scrut]
                            let newEnv = envWithAltBindings alt
@@ -137,7 +159,9 @@ reduceLit (Literal (Lchar c) _) = CharValue c
 reduceLit (Literal (Lstring s) _) = StringValue s
 
 matchingAlt :: Alt -> Value -> Bool
-matchingAlt (Acon qDcon _ _ _)           (DataValue qDcon' _) = qDcon == qDcon'
+matchingAlt (Acon qDcon _ _ _)           (DataValue qDcon' _) = trace (show qDcon ++ " MATCHYMATCHY " ++ show qDcon' ++ " is " ++ show (fst qDcon == fst qDcon') ++ show (qDcon == qDcon') ++ show (pname == pname') ++ pname ++ pname' ++ show (ids == ids') ++ show (id == id') ++ id ++ id') $ qDcon == qDcon'
+       where (M ((P pname), ids, id)) = fromJustNote "damnbugging" $ fst qDcon
+             (M ((P pname'), ids', id')) = fromJustNote "dernbugging" $ fst qDcon'
 matchingAlt (Alit (Literal (Lint i) _) _)  (IntegralValue i') = i == i'
 matchingAlt (Alit (Literal (Lchar i) _) _) (CharValue i')     = i == i'
 matchingAlt (Adefault _)       _                              = True

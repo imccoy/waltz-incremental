@@ -13,8 +13,6 @@ import System.Cmd
 import System.Exit
 import System.IO
 
-import Safe
-
 import Language.Core.Core
 import Language.Core.Parser
 import Language.Core.ParseGlue
@@ -42,20 +40,7 @@ envFromCdef (Constr qDcon tbinds tys) env
   = do v <- heapAdd $ Thunk envEmpty (CoreExp $ Dcon qDcon) []
        return $ envInsert qDcon v env
 
-      
-
-eval :: [Module] -> Env -> Id -> Id -> [HeapValue] -> HeapM HeapValue
-eval mods env startMod startFun args = do
-  heapAdd $ Thunk env (CoreExp varExp) args
-  where mod = moduleById startMod mods
-        varExp = Var (Just $ moduleMname mod , startFun)
-
-moduleMname (Module mname _ _) = mname
-
-moduleById id mods = headNote ("Couldn't find module with id " ++ id) $
-                       [ mod | mod <- mods, moduleId mod == id ]
-moduleId (Module (M (_, _, id)) _ _) = id
-                                 
+                                
 
 coreFileContents filename = do
   file <- openFile filename ReadMode
@@ -100,6 +85,7 @@ main = do
   
   ([arg_change, result_change], change_heap) <- runHeap $ do {
     env <- envFromModules mods ;
+    setDefaultEnv env ;
     dogString <- heapAdd =<< unpackCString [StringValue "Dog"];
     dogDefString <- heapAdd =<< unpackCString [StringValue "Man's Best Friend"];
 
@@ -116,13 +102,28 @@ main = do
     deepseq arg_change;
     liftIO $ putStrLn "MAINY input changes are cooked";
     deepseq result_change;
+
+    change_heap <- heapGetFull;
+    liftIO $ putStrLn $ "MAINY change produced " ++ showValue change_heap (heapGet' change_heap result_change);
+
+    input_changer <- eval mods env "B"
+                                   "zdfApplicableIncrementalisedInputInputzuincrementalised"
+                                   [];
+    input_list_changer <- eval mods env "Inctime"
+                                      "zdfApplicableIncrementalisedZMZNBuiltinListzuincrementalised"
+                                      [input_changer];
+    result_changer <- eval mods env "B"
+                                    "zdfApplicableIncrementalisedAppStateAppStatezuincrementalised"
+                                    [];
+    conn <- liftIO $ connection;
+    applyChangeDb conn env mods (deepseqWithout databaseValueMatcher) db_initial_arg arg_change input_list_changer;
+    applyChangeDb conn env mods (deepseqWithout databaseValueMatcher) db_initial_result result_change result_changer;
+    liftIO $ commit conn; 
+    liftIO $ disconnect conn;
     return [arg_change, result_change]
   }
 
-  putStrLn $ "MAINY change produced " ++ showValue change_heap (heapGet' change_heap result_change)
 
-  applyChangeDb db_initial_arg change_heap arg_change
-  applyChangeDb db_initial_result change_heap result_change
   {-
   (putStrLn . showValueHeap) =<< runHeap (do
     result <- heapAdd $ DatabaseValue db_initial_result

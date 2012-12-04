@@ -8,7 +8,7 @@ import qualified Data.Map as Map
 
 import Safe
 
-import Language.Core.Core (Exp, Qual, Dcon, AnMname (..), Pname (..), Mname, Id)
+import Language.Core.Core (Exp (..), Qual, Dcon, AnMname (..), Pname (..), Mname, Module (..), Id)
 import Language.Core.Parser()
 
 deriving instance Read Pname
@@ -59,9 +59,9 @@ showValueShort (DatabaseValue (DbRef id)) = "DatabaseValue " ++ show id
 
 
 
-showArgs heap args = indent 2 $ joinLines $ map f args
+showArgs heap@(heapArray, _, _) args = indent 2 $ joinLines $ map f args
   where f arg = showValue heap $ fromJustNote ("showArgs: no arg " ++ show arg) 
-                                              (fst heap Array.! arg)
+                                              (heapArray Array.! arg)
 
 showValueHeap (v, h) = showValue h v
 
@@ -74,7 +74,7 @@ addThunkArgs a v = badArgs "addThunkArgs" =<< liftM (v:) (mapM heapGet a)
 
 
 type HeapStore = Array.Array HeapValue (Maybe Value)
-type Heap = (HeapStore, HeapValue)
+type Heap = (HeapStore, HeapValue, Maybe Env)
 type HeapM = StateT Heap IO
 
 runHeap f = runStateT f emptyHeap
@@ -83,17 +83,23 @@ heapGetFull :: HeapM Heap
 heapGetFull = get
 
 heapGetStore :: HeapM HeapStore
-heapGetStore = get >>= return . fst
+heapGetStore = get >>= (\(a, _, _) -> return a)
 
 heapSetStore :: HeapStore -> HeapM ()
-heapSetStore x = get >>= (\(_, b) -> put (x, b))
+heapSetStore x = get >>= (\(_, b, c) -> put (x, b, c))
 
-emptyHeap = (Array.listArray (0, 1024) (repeat Nothing), 0)
+getDefaultEnv :: HeapM (Maybe Env)
+getDefaultEnv = get >>= (\(_, _, c) -> return c)
+
+setDefaultEnv :: Env -> HeapM ()
+setDefaultEnv env = get >>= (\(a, b, _) -> put (a, b, Just env))
+
+emptyHeap = (Array.listArray (0, 1024) (repeat Nothing), 0, Nothing)
 
 heapAdd :: Value -> HeapM Integer
-heapAdd v = do (vs, i) <- get
+heapAdd v = do (vs, i, e) <- get
                let vs' = include vs i v
-               put (vs', i + 1)
+               put (vs', i + 1, e)
                return i
   where include vs i v 
            | snd (Array.bounds vs) <= i
@@ -108,8 +114,8 @@ heapSet i v = heapGetStore >>= heapSetStore . (Array.// [(i, Just v)])
 heapGet :: HeapValue -> HeapM Value
 heapGet i = heapGetStore >>= return . fromJustNote ("heapGet: nothing at " ++ show i) .
                                            (Array.! i)
-heapGet' h i = fromJustNote ("heapGet': nothing at " ++ show i)
-                            (fst h Array.! i)
+heapGet' (h,_,_) i = fromJustNote ("heapGet': nothing at " ++ show i)
+                            (h Array.! i)
 heapChange :: (Value -> HeapM Value) -> HeapValue -> HeapM ()
 heapChange f i = heapGet i >>= f >>= (heapSet i)
 
@@ -125,6 +131,7 @@ envEmpty = Env $ Map.empty
 envInsert k v (Env m) = Env $ Map.insert k v m
 envLookup k (Env m) = Map.lookup k m
 envKeys (Env m) = Map.keys m
+envMerge (Env m) (Env n) = Env $ Map.union m n
 
 instance Show Env where
   show _ = "Env"
@@ -137,4 +144,25 @@ badArgs n [] = error $ n ++ " not defined for []"
 badArgs n args = heapGetFull >>= (\h -> error $ n ++ " not defined for "
                                             ++ concat (map (showValue h) args))
 
+databaseValueMatcher (DatabaseValue _) = True
+databaseValueMatcher _ = False
 
+
+eval :: [Module] -> Env -> Id -> Id -> [HeapValue] -> HeapM HeapValue
+eval mods env startMod startFun args = do
+  heapAdd $ Thunk env (CoreExp varExp) args
+  where mod = moduleById startMod mods
+        varExp = Var (Just $ moduleMname mod , startFun)
+
+      
+moduleMname (Module mname _ _) = mname
+
+moduleById id mods = headNote ("Couldn't find module with id " ++ id) $
+                       [ mod | mod <- mods, moduleId mod == id ]
+moduleId (Module (M (_, _, id)) _ _) = id
+ 
+untilM :: (Monad m) => (a -> Bool) -> (a -> m a) -> a -> m a
+untilM t iter b
+ | t b == False = do b' <- iter b
+                     untilM t iter b'
+ | otherwise    = return b

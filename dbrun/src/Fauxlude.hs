@@ -8,6 +8,7 @@ import Builtins
 import Types
 
 import Control.Monad (liftM2)
+import Control.Monad.IO.Class (liftIO)
 import Data.Foldable (foldrM)
 import Safe
 
@@ -21,7 +22,7 @@ builtinsEnv hsEnv
      addBuiltin ghcExceptionModule "patError" patError 1 >>=
      addBuiltinH ghcNumModule "zp" (tcThunk 0) 1 >>=
      addBuiltinH ghcNumModule "fromInteger" (tcThunk 6) 1 >>=
-     addBuiltinM ghcNumModule "zdfNumInteger" zdfNumInteger 0 >>=
+     addBuiltinM ghcNumModule "zdfNumInt" zdfNumInteger 0 >>=
      addBuiltinFn ghcListModule "length" "listLength" hsEnv >>=
      addBuiltinFn ghcListModule "filter" "listFilter" hsEnv >>=
      addBuiltinFn ghcListModule "all" "listAll" hsEnv >>=
@@ -33,10 +34,11 @@ builtinsEnv hsEnv
      addBuiltinFn ghcClassesModule "zdfEqChar" "zdfEqlChar" hsEnv >>=
      addBuiltinF ghcClassesModule "zeze" hsEnv >>=
      addBuiltinF ghcBaseModule "zd" hsEnv >>=
-     addBuiltinF ghcMapModule "mapInsert" hsEnv >>=
+     addBuiltinFn ghcMapModule "insert" "mapInsert" hsEnv >>=
      addBuiltinF ghcMapModule "mapWithKey" hsEnv >>=
      addBuiltinFn ghcMapModule "alter" "mapAlter" hsEnv >>=
      addBuiltinFn ghcMapModule "empty" "mapEmpty" hsEnv >>=
+     addBuiltinFn ghcMapModule "lookup" "mapGet" hsEnv >>=
      addBuiltin funcsAuxModule "intEq" intEq 2 >>=
      addBuiltin funcsAuxModule "intPlus" intPlus 2 >>=
      addBuiltin ghcGmpIntModule "smallInteger" smallInteger 1
@@ -49,12 +51,13 @@ addBuiltin :: AnMname -> Id -> ([Value] -> HeapM Value) -> Int -> Env
            -> HeapM Env
 addBuiltin mod name f arity env = addBuiltinH mod
                                               name
-                                              (\a -> do mapM whnf a
-                                                        heapGetArgs f a)
+                                              (\a -> do heapGetArgs f a)
                                               arity
                                               env
 
-heapGetArgs f a = f =<< mapM heapGet a
+heapGetArgs f a = do mapM whnf a
+                     liftIO $ putStrLn $ "heapGetArgs forcing " ++ show a
+                     f =<< mapM heapGet a
 
 addBuiltinH :: AnMname -> Id -> ([HeapValue] -> HeapM Value) -> Int -> Env
             -> HeapM Env
@@ -130,6 +133,9 @@ zdfNumInteger = do
   return $ (\_ -> return $ DataValue (Just ghcNumModule, "DZCNum") addrs)
   where
     zpInteger args@[IntegralValue a, IntegralValue b] = intPlus args
+    zpInteger args@[DataValue _ [a], DataValue _ [b]] = do mapM whnf [a, b]
+                                                           intPlus =<< mapM heapGet 
+                                                                            [a,b]
     zpInteger args = badArgs "zpInteger" args
     fromIntegerInteger [IntegralValue a] = do a' <- heapAdd $ IntegralValue a
                                               return $ DataValue intPrimCon [a']
@@ -146,8 +152,9 @@ tcDictMethod n (DataValue v methods) = return $
 tcDictMethod _ v = badArgs "tcDictMethod" [v]
 
 tcThunk :: Int -> [HeapValue] -> HeapM Value
-tcThunk n a@(dict:args) = addThunkArgs args =<<
-                                (heapGet dict
-                                      >>= tcDictMethod n
-                                      >>= heapGet)
+tcThunk n a@(dict:args) = do whnf dict
+                             addThunkArgs args =<<
+                                  (heapGet dict
+                                        >>= tcDictMethod n
+                                        >>= heapGet)
 
