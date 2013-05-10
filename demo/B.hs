@@ -3,6 +3,7 @@ module B where
 import Prelude hiding (head, length)
 
 head (x:_) = x
+length :: [a] -> Int
 length (x:xs) = 1 + length xs
 length [] = 0
 
@@ -10,15 +11,12 @@ data TryInt =  TryIntP Int
 
 data TryList a = EmptyTryList | ConsTryList a (TryList a)
 
-data AppState = AppState { appStateWordsLength :: Integer
+data AppState = AppState { appStateWordsLength :: Int
                          , appStateWords :: [String]
                          , appStateMostRecentWord :: String
                          }
 
-thing True = "yes"
-thing False = "no"
-
-initial_state = ["welcome"]
+initial_state = ['w':'e':'l':'c':'o':'m':'e':[]]
 
 app_state words = AppState { appStateWordsLength = words_length words
                            , appStateWords = words

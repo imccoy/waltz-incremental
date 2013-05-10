@@ -9,5 +9,5 @@ Build-Type:     Simple
 Executable incrm
   Hs-Source-Dirs: src
   Main-Is: Main.hs
-  build-depends:  base, extcore, mtl, safe, containers, array
+  build-depends:  base, extcore, mtl, safe, containers, array, fgl
   ghc-options: -Werror -fwarn-unused-imports
