@@ -11,16 +11,16 @@ import Inctime
 
 
 
-data WordDefinitions = WordDefinitions String [String]
+data WordDefinitions = WordDefinitions [Char] [[Char]]
 
 data AppState = AppState { appStateNumWords :: Int
                          , appStateNumDefinitions :: Int
-                         , appStateWords :: [String]
-                         , appStateDefinitions :: MapD String [String]
+                         , appStateWords :: [[Char]]
+                         , appStateDefinitions :: MapD [Char] [[Char]]
                          }
 
-data Input = NewWordInput String
-           | NewDefinitionInput String String
+data Input = NewWordInput [Char]
+           | NewDefinitionInput [Char] [Char]
 
 isNewWordInput i = case i of
                      (NewWordInput _) -> True

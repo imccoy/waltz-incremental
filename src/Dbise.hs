@@ -4,14 +4,11 @@ module Dbise (dbiseCoreModule) where
 import Control.Monad (liftM, liftM2)
 import Data.List (isPrefixOf, isSuffixOf, isInfixOf)
 
-import CoreSyn (Bind (Rec, NonRec), Expr (..))
+import CoreSyn (Bind (Rec, NonRec), Expr (..), mkApps)
 import Name (occNameString, nameOccName, nameUnique, occNameSpace)
 import Var
 import Type
 import TyCon (tyConName)
-
-import Debug.Trace
-import Outputable
 
 import Lookups
 import Modify
@@ -46,6 +43,9 @@ dbiseId id = do
 
 dbiseType type_@(dbisableType -> False) = return type_
 
+
+dbiseType type_@(isTyVarTy -> True) = return type_
+
 dbiseType type_@(splitForAllTys -> (tyVars@(_:_), ty)) = do
   ty' <- dbiseType ty
   return $ mkForAllTys tyVars $ ty'
@@ -55,6 +55,17 @@ dbiseType type_@(splitArrowAppTy_maybe -> Just (first, rest)) = do
   rest' <- dbiseType rest
   return $ mkArrow first' rest'
 
+dbiseType type_@(splitFunTy_maybe -> Just (first, rest)) = do
+  first' <- dbiseType first
+  rest' <- dbiseType rest
+  return $ mkFunTy first' rest'
+
+
+dbiseType type_@(splitAppTys -> (ty, args@(_:_))) = do
+  args' <- mapM dbiseType args
+  let type_' = mkAppTys ty args'
+  dbRefTC <- dbRefTyCon
+  return $ mkTyConApp dbRefTC [type_']
 
 dbiseType type_ = do
   dbRefTC <- dbRefTyCon
@@ -65,19 +76,21 @@ dbisableType (splitForAllTys -> ((_:_), ty)) = dbisableType ty
 dbisableType (splitAppTy_maybe -> Just (ty, _)) = dbisableType ty
 
 dbisableType (splitTyConApp_maybe -> Just (tyCon, _))
-  | "_incrementali" `isInfixOf` nameString  = trace ("failing1 " ++ nameString) False
-  | "#" `isSuffixOf` nameString             = trace ("failing2 " ++ nameString) False
-  | "T:" `isPrefixOf` nameString            = trace ("failing3 " ++ nameString) False
-  | "Incrementalised" `isPrefixOf` nameString = trace ("failing4 " ++ nameString) False
-  | otherwise                               = trace ("passing name " ++ nameString) True
+  | "_incrementali" `isInfixOf` nameString  = False
+  | "#" `isSuffixOf` nameString             = False
+  | "T:" `isPrefixOf` nameString            = False
+  | "Incrementalised" `isPrefixOf` nameString = False
+  | otherwise                               = True
   where nameString = occNameString $ nameOccName $ tyConName tyCon
-dbisableType t = trace ("passing " ++ (showSDoc $ ppr t)) True
+dbisableType t = True
 
 dbisableId id
   | not $ dbisableType (varType id)           = False
   | "$f" `isPrefixOf` nameString              = False
   | "_dbise" `isInfixOf` nameString           = False
   | "Incrementalised" `isPrefixOf` nameString = False
+  | "_incrementali" `isInfixOf` nameString    = False
+  | "==" == nameString                        = False
   -- so ghetto:
   | "extractReplaceValue" == nameString       = False
   | "isIncrementalisedReplace" == nameString  = False
@@ -98,10 +111,16 @@ dbiseCoreBind (Rec name_exps) = do
 dbiseExp (Var id) = liftM Var (dbiseId id)
 dbiseExp (Lit lit) = return $ Lit lit
 dbiseExp app@(App exp arg)
-  | ((Var v), _, _) <- collectTypeAndValArgs app,
-    not (dbisableId v)     = return app
+  | ((Var v), tys, args) <- collectTypeAndValArgs app,
+    not (dbisableId v)     = do trivialDbRefFn <- mkTrivialDbRef
+                                ty' <- dbiseType $ exprType $ mkApps (Var v) tys
+                                return $ mkApps (mkApps (Var trivialDbRefFn)
+                                                        [Type ty', mkApps (Var v) tys])
+                                                args
   | otherwise              = liftM2 App (dbiseExp exp) (dbiseExp arg)
-dbiseExp (Lam arg body) = liftM2 Lam (dbiseId arg) (dbiseExp body)
+dbiseExp (Lam arg body)
+  | isTyVar arg = liftM (Lam arg) (dbiseExp body)
+  | otherwise   = liftM2 Lam (dbiseId arg) (dbiseExp body)
 dbiseExp (Let bind exp) = liftM2 Let (dbiseCoreBind bind) (dbiseExp exp)
 dbiseExp (Case scrut bind type_ alts) = do
   undef <- lookupPreludeFn "GHC.Err" "undefined"

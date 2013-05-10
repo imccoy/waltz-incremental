@@ -283,6 +283,12 @@ dbRefTyCon
                                    "DbRef"
                                    OccName.tcName
 
+mkTrivialDbRef :: TypeLookupM Id
+mkTrivialDbRef
+  = lookupAndConvertInctimeTyThing tyThingId
+                                   "mkTrivialDbRef"
+                                   "mkTrivialDbRef"
+                                   OccName.varName
 
 lookupPreludeFn :: String -> String -> TypeLookupM Var
 lookupPreludeFn m n = do

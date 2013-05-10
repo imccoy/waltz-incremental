@@ -13,6 +13,7 @@ import GHC.Prim
 
 import Data.Data
 import Unsafe.Coerce (unsafeCoerce)
+import System.IO.Unsafe
 
 import Data.IORef
 
@@ -105,57 +106,57 @@ id_incrementalised = id
 -- I'm not at all sure that the following work.
 
 -- why are the foralls in this order? Because it seems to typecheck.
-compose_incrementalised :: forall b. forall b_inc. (Incrementalised b b_inc) =>
-                           forall c. forall c_inc. (Incrementalised c c_inc) =>
-                           forall a. forall a_inc. (Incrementalised a a_inc) =>
-                           (b -> c) -> (b_inc -> c_inc) ->
-                           (a -> b) -> (a_inc -> b_inc) -> a_inc -> c_inc
-compose_incrementalised f f_inc g g_inc = f_inc . g_inc
+compose_incrementalised :: forall b. forall b_incrementalised. (Incrementalised b b_incrementalised) =>
+                           forall c. forall c_incrementalised. (Incrementalised c c_incrementalised) =>
+                           forall a. forall a_incrementalised. (Incrementalised a a_incrementalised) =>
+                           (b -> c) -> (b_incrementalised -> c_incrementalised) ->
+                           (a -> b) -> (a_incrementalised -> b_incrementalised) -> a_incrementalised -> c_incrementalised
+compose_incrementalised f f_incrementalised g g_incrementalised = f_incrementalised . g_incrementalised
 
-apply_incrementalised :: forall a a_inc b b_inc.
-                         (Incrementalised a a_inc) =>
-                         (Incrementalised b b_inc) =>
-                         (a -> b) -> (a_inc -> b_inc) -> a_inc -> b_inc
-apply_incrementalised f f_inc arg_inc = f_inc arg_inc
+apply_incrementalised :: forall a a_incrementalised b b_incrementalised.
+                         (Incrementalised a a_incrementalised) =>
+                         (Incrementalised b b_incrementalised) =>
+                         (a -> b) -> (a_incrementalised -> b_incrementalised) -> a_incrementalised -> b_incrementalised
+apply_incrementalised f f_incrementalised arg_incrementalised = f_incrementalised arg_incrementalised
 
 
-map_incrementalised :: forall a a_inc b b_inc.
-                       (Incrementalised a a_inc) =>
-                       (Incrementalised b b_inc) =>
-                       (a -> b) -> (a -> a_inc -> b_inc) ->
-                       [a] -> (BuiltinList_incrementalised a a_inc) ->
-                       (BuiltinList_incrementalised b b_inc)
-map_incrementalised f f_inc xs (BuiltinList_incrementalised_build_using_1 x) = 
+map_incrementalised :: forall a a_incrementalised b b_incrementalised.
+                       (Incrementalised a a_incrementalised) =>
+                       (Incrementalised b b_incrementalised) =>
+                       (a -> b) -> (a -> a_incrementalised -> b_incrementalised) ->
+                       [a] -> (BuiltinList_incrementalised a a_incrementalised) ->
+                       (BuiltinList_incrementalised b b_incrementalised)
+map_incrementalised f f_incrementalised xs (BuiltinList_incrementalised_build_using_1 x) = 
   BuiltinList_incrementalised_build_using_1 (f x)
-map_incrementalised f f_inc xs (BuiltinList_incrementalised)
+map_incrementalised f f_incrementalised xs (BuiltinList_incrementalised)
   = BuiltinList_incrementalised -- empty list, do nothing
-map_incrementalised f f_inc xs (BuiltinListCons_incrementalised h_change t_change)
+map_incrementalised f f_incrementalised xs (BuiltinListCons_incrementalised h_change t_change)
   = case xs of -- we need to delay this until after matching
                -- BuiltinListCons_incrementalised because otherwise
                -- we pull on the xs list too soon. xs may be unavailable, in
                -- which case this causes catastrophic failure.
-      h:t -> BuiltinListCons_incrementalised (f_inc h h_change)
-                                             (map_incrementalised f f_inc t t_change)
-map_incrementalised f f_inc xs (BuiltinList_incrementalised_identity)
+      h:t -> BuiltinListCons_incrementalised (f_incrementalised h h_change)
+                                             (map_incrementalised f f_incrementalised t t_change)
+map_incrementalised f f_incrementalised xs (BuiltinList_incrementalised_identity)
   = BuiltinList_incrementalised_identity
 {-
-  = let xs' = map (\a -> f_inc a mkIncrementalisedIdentity) xs
+  = let xs' = map (\a -> f_incrementalised a mkIncrementalisedIdentity) xs
      in case all isIncrementalisedIdentity xs' of
           True -> BuiltinList_incrementalised_identity
           False -> foldr BuiltinListCons_incrementalised
                          BuiltinList_incrementalised
                          xs'
 -}
-map_incrementalised f f_inc xs (BuiltinList_incrementalised_replace xs') = BuiltinList_incrementalised_replace $ map f xs'
+map_incrementalised f f_incrementalised xs (BuiltinList_incrementalised_replace xs') = BuiltinList_incrementalised_replace $ map f xs'
 
-filter_incrementalised :: forall a a_inc. (Incrementalised a a_inc) =>
-                          (a -> Bool) -> (a -> a_inc -> Bool_incrementalised) ->
-                          [a] -> (BuiltinList_incrementalised a a_inc) ->
-                          (BuiltinList_incrementalised a a_inc)
-filter_incrementalised f f_inc xs (BuiltinList_incrementalised_build_using_1 x)
+filter_incrementalised :: forall a a_incrementalised. (Incrementalised a a_incrementalised) =>
+                          (a -> Bool) -> (a -> a_incrementalised -> Bool_incrementalised) ->
+                          [a] -> (BuiltinList_incrementalised a a_incrementalised) ->
+                          (BuiltinList_incrementalised a a_incrementalised)
+filter_incrementalised f f_incrementalised xs (BuiltinList_incrementalised_build_using_1 x)
   | f x = BuiltinList_incrementalised_build_using_1 x
   | otherwise = BuiltinList_incrementalised_identity
-filter_incrementalised f f_inc xs (BuiltinList_incrementalised_identity)
+filter_incrementalised f f_incrementalised xs (BuiltinList_incrementalised_identity)
   = BuiltinList_incrementalised_identity
 
 class Num_incrementalised base incrementalised | incrementalised -> base where
@@ -263,9 +264,9 @@ typeclass_ShowBool_incrementalised = undefined
 typeclass_ShowFloat_incrementalised = undefined
 typeclass_ShowDouble_incrementalised = undefined
 
-show_incrementalised :: forall a. forall a_inc. 
-                        (Incrementalised a a_inc, Show a_inc) => 
-                        a_inc -> String_incrementalised
+show_incrementalised :: forall a. forall a_incrementalised. 
+                        (Incrementalised a a_incrementalised, Show a_incrementalised) => 
+                        a_incrementalised -> String_incrementalised
 show_incrementalised _ = undefined
 
 instance ApplicableIncrementalised Int Int_incrementalised where
@@ -333,10 +334,10 @@ head_incrementalised (BuiltinList_incrementalised_build_using_1 new_head)
   = BuiltinList_incrementalised_replace new_head
 
 length_incrementalised :: forall a.
-                          forall a_inc.
-                          Incrementalised a a_inc => 
+                          forall a_incrementalised.
+                          Incrementalised a a_incrementalised => 
                           [a] ->
-                          BuiltinList_incrementalised a a_inc -> Int_incrementalised
+                          BuiltinList_incrementalised a a_incrementalised -> Int_incrementalised
 length_incrementalised _ (BuiltinList_incrementalised_replace a)
   = Int_incrementalised_replace $ length a
 length_incrementalised _ (BuiltinList_incrementalised_build_using_1 _)
@@ -349,7 +350,7 @@ length_incrementalised _ _ = error "can't do incrementalised length"
 
 type String_incrementalised = BuiltinList_incrementalised Char Char_incrementalised
 
-instance Ord_incrementalised [v] (BuiltinList_incrementalised v v_inc) where
+instance Ord_incrementalised [v] (BuiltinList_incrementalised v v_incrementalised) where
   compare_incrementalised _ _ = error "compare_incrementalised says don't go there."
 -- the typeclass constraint here is to capture the typeclass dictionary value
 -- within MapD, so the ApplicableIncrementalised typeclass instance doesn't need
@@ -370,15 +371,15 @@ mapDkeys (MapD m _) = Map.keys m
 instance (Show k, Show v) => Show (MapD k v) where
   show (MapD m d) = show m
 
-data MapD_incrementalised k k_inc v v_inc
-   = MapD_incrementalised_atkey k v_inc
+data MapD_incrementalised k k_incrementalised v v_incrementalised
+   = MapD_incrementalised_atkey k v_incrementalised
    | MapD_incrementalised_identity
    | MapD_incrementalised_replace (MapD k v)
   deriving (Show)
 
-instance forall k k_inc v v_inc. 
-         ((Incrementalised k k_inc), (Incrementalised v v_inc)) =>
-         Incrementalised (MapD k v) (MapD_incrementalised k k_inc v v_inc) where
+instance forall k k_incrementalised v v_incrementalised. 
+         ((Incrementalised k k_incrementalised), (Incrementalised v v_incrementalised)) =>
+         Incrementalised (MapD k v) (MapD_incrementalised k k_incrementalised v v_incrementalised) where
   isIncrementalisedReplace (MapD_incrementalised_replace _) = True
   isIncrementalisedReplace _ = False
   isIncrementalisedIdentity (MapD_incrementalised_identity) = True
@@ -388,11 +389,11 @@ instance forall k k_inc v v_inc.
   mkIncrementalisedIdentity = MapD_incrementalised_identity
   mkIncrementalisedReplace = MapD_incrementalised_replace
 
-instance forall k k_inc v v_inc.
-         ((ApplicableIncrementalised k k_inc), (ApplicableIncrementalised v v_inc)) => 
+instance forall k k_incrementalised v v_incrementalised.
+         ((ApplicableIncrementalised k k_incrementalised), (ApplicableIncrementalised v v_incrementalised)) => 
      ApplicableIncrementalised (MapD k v)
-                               (MapD_incrementalised k k_inc
-                                                     v v_inc) where
+                               (MapD_incrementalised k k_incrementalised
+                                                     v v_incrementalised) where
   applyInputChange (MapD_incrementalised_replace m) _ = m
   applyInputChange (MapD_incrementalised_identity) m = m
   applyInputChange (MapD_incrementalised_atkey k change) m
@@ -402,50 +403,50 @@ instance forall k k_inc v v_inc.
 shuffle :: forall a b. (Ord b) => (a -> b) -> [a] -> MapD b [a]
 shuffle f is = foldr (\i m -> mapDalter (i:) (f i) m) (mapDempty []) is
 
-shuffle_incrementalised :: forall a a_inc b b_inc.
-                           (Incrementalised a a_inc) =>
-                           (Incrementalised b b_inc) =>
-                           (Ord b, Ord_incrementalised b b_inc) =>
-                           (a -> b) -> (a -> a_inc -> b_inc) ->
-                           [a] -> (BuiltinList_incrementalised a a_inc) ->
-                           (MapD_incrementalised b b_inc
-                                    [a] (BuiltinList_incrementalised a a_inc))
-shuffle_incrementalised f f_inc xs c@(BuiltinList_incrementalised_build_using_1 x)
+shuffle_incrementalised :: forall a a_incrementalised b b_incrementalised.
+                           (Incrementalised a a_incrementalised) =>
+                           (Incrementalised b b_incrementalised) =>
+                           (Ord b, Ord_incrementalised b b_incrementalised) =>
+                           (a -> b) -> (a -> a_incrementalised -> b_incrementalised) ->
+                           [a] -> (BuiltinList_incrementalised a a_incrementalised) ->
+                           (MapD_incrementalised b b_incrementalised
+                                    [a] (BuiltinList_incrementalised a a_incrementalised))
+shuffle_incrementalised f f_incrementalised xs c@(BuiltinList_incrementalised_build_using_1 x)
   = MapD_incrementalised_atkey (f x) c
 
-mapDmapWithKey_incrementalised :: forall k k_inc v1 v1_inc v2 v2_inc.
-                                  (Incrementalised k k_inc,
-                                    Incrementalised v1 v1_inc,
-                                    Incrementalised v2 v2_inc) =>
+mapDmapWithKey_incrementalised :: forall k k_incrementalised v1 v1_incrementalised v2 v2_incrementalised.
+                                  (Incrementalised k k_incrementalised,
+                                    Incrementalised v1 v1_incrementalised,
+                                    Incrementalised v2 v2_incrementalised) =>
                                   (k -> v1 -> v2) ->
-                                  (k -> k_inc -> v1 -> v1_inc -> v2_inc) ->
+                                  (k -> k_incrementalised -> v1 -> v1_incrementalised -> v2_incrementalised) ->
                                   MapD k v1 ->
-                                  MapD_incrementalised k k_inc v1 v1_inc ->
-                                  MapD_incrementalised k k_inc v2 v2_inc
-mapDmapWithKey_incrementalised f f_inc m (MapD_incrementalised_atkey k change)
+                                  MapD_incrementalised k k_incrementalised v1 v1_incrementalised ->
+                                  MapD_incrementalised k k_incrementalised v2 v2_incrementalised
+mapDmapWithKey_incrementalised f f_incrementalised m (MapD_incrementalised_atkey k change)
   = let v0 = mapDlookup k m
-        c1 = f_inc k mkIncrementalisedIdentity v0 change
+        c1 = f_incrementalised k mkIncrementalisedIdentity v0 change
      in MapD_incrementalised_atkey k c1
 
-mapDkeys_incrementalised :: forall k k_inc v v_inc.
-                              (Incrementalised k k_inc,
-                               Incrementalised v v_inc) =>
+mapDkeys_incrementalised :: forall k k_incrementalised v v_incrementalised.
+                              (Incrementalised k k_incrementalised,
+                               Incrementalised v v_incrementalised) =>
                               MapD k v ->
-                              MapD_incrementalised k k_inc v v_inc ->
-                              BuiltinList_incrementalised k k_inc
+                              MapD_incrementalised k k_incrementalised v v_incrementalised ->
+                              BuiltinList_incrementalised k k_incrementalised
 mapDkeys_incrementalised (MapD m _) (MapD_incrementalised_atkey k _)
   = case Map.lookup k m of
       Just a -> mkIncrementalisedIdentity
       Nothing -> BuiltinList_incrementalised_build_using_1 k
 
-mapDlookup_incrementalised :: forall k k_inc v v_inc.
-                              (Incrementalised k k_inc,
-                               Incrementalised v v_inc) =>
-                              k -> k_inc ->
+mapDlookup_incrementalised :: forall k k_incrementalised v v_incrementalised.
+                              (Incrementalised k k_incrementalised,
+                               Incrementalised v v_incrementalised) =>
+                              k -> k_incrementalised ->
                               MapD k v ->
-                              MapD_incrementalised k k_inc v v_inc ->
-                              v_inc
-mapDlookup_incrementalised k k_inc (MapD _ _) (MapD_incrementalised_atkey k' c)
+                              MapD_incrementalised k k_incrementalised v v_incrementalised ->
+                              v_incrementalised
+mapDlookup_incrementalised k k_incrementalised (MapD _ _) (MapD_incrementalised_atkey k' c)
  | k == k'   = c
  | otherwise = mkIncrementalisedIdentity
  
@@ -453,6 +454,9 @@ mapDlookup_incrementalised k k_inc (MapD _ _) (MapD_incrementalised_atkey k' c)
 data DbRef a = DbRef { dbRefGetter :: IO a,
                        dbRefValue :: IORef (Maybe a)
                      }
+mkTrivialDbRef :: forall a. a -> DbRef a
+mkTrivialDbRef v = DbRef { dbRefGetter = return v,
+                           dbRefValue = unsafePerformIO (newIORef $ Just v)}
 
 dbGetRef :: forall a. DbRef a -> IO a
 dbGetRef ref = do value <- readIORef $ dbRefValue ref

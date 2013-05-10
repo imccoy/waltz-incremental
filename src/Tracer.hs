@@ -8,7 +8,6 @@ import Data.Maybe
 import CoreSyn (Expr (..), Bind (..), CoreBind, CoreBndr (..), Note (..),
                 mkStringLit, isTypeArg, bindersOfBinds, bindersOf)
 import GHC (dm_core_module, DesugaredModule)
-import Literal (literalType)
 import HscTypes (ModGuts (..), tyThingId)
 import MkCore (mkCoreApps)
 import Name (nameModule)
@@ -16,6 +15,7 @@ import Outputable (showSDoc, showSDocDebug, ppr)
 import Type
 import Var (Var, varType)
 
+import ExprUtils
 import Lookups
 import PrelNames (unpackCStringName)
 
@@ -103,20 +103,6 @@ traceExp name e@(Note note expr) = traceExp name expr
 traceExp name e@(Lit lit) = return e
 
  
-exprType :: Expr CoreBndr -> Type
-exprType (Var id) = varType id
-exprType (Lit lit) = literalType lit
-exprType (App expr (Type arg)) = applyTy (exprType expr) arg
-exprType (App expr arg) = case splitFunTy_maybe (exprType expr) of
-                            Just (_, t) -> t
-                            Nothing -> exprType expr
-exprType (Lam id expr) = mkFunTy (varType id) (exprType expr)
-exprType (Let bind expr) = exprType expr
-exprType (Case expr id type_ alts) = type_
-exprType (Cast expr coercion) = coercion
-exprType (Type type_) = type_
-exprType (Note note expr) = exprType expr
-
 verifySingularVarDecsCoreModule :: DesugaredModule -> DesugaredModule
 verifySingularVarDecsCoreModule dm =
   let coreMod = verifySingularVarDecsModGuts (dm_core_module dm)
